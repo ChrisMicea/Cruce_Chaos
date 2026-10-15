@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ro" xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+
+    <meta http-equiv="content-type" content="text/html;charset=utf-8" />
+
+    <meta name="keywords"
+        content="cruce, joc, carti, tutorial, cum se joaca, online, joc cruce, joc cruce online, joc carti, joc carti cruce" />
+    <meta name="description" content="Tutorialul jocului de cărți Cruce." />
+    <meta name="author" content="Antal Alin-Dănuț" />
+    <meta name="robots" content="index, follow" />
+
+    <meta name="theme-color" content="#111" />
+    <meta name="color-scheme" content="dark">
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Tutorial Cruce</title>
+    <link rel="SHORTCUT ICON" href="images/ico.png" />
+
+    <link type="text/css" rel="stylesheet" href="navigator.css" />
+    <link type="text/css" rel="stylesheet" href="tutorial.css" />
+    <link type="text/css" rel="stylesheet" href="footer.css" />
+
+    <script src="common.js"></script>
+</head>
+
+<body>
+    <nav>
+        <a href="/">Acasă</a>
+        <a href="campionat.htm">Campionat</a>
+        <a class="active" href="#">Tutorial</a>
+        <a href="anunturi.htm">Anunțuri</a>
+        <a href="contact.htm">Contact</a>
+    </nav>
+    <article>
+        <h1>Tutorial de joc</h1>
+        <p>
+            <strong>Cruce</strong> este un joc de cărți pentru 2, 3 sau 4 jucători (în 4 se poate juca pe echipe de câte
+            2).<br />
+        </p>
+
+        <h2 id="pachet">Pachetul de cărți</h2>
+        <p>
+            Se folosește un pachet de cărți de joc (unguresc) ce conține 32 (sau 36) de cărți împărțite în 4 categorii
+            numite
+            culori (mai rar anotimpuri).<br />
+            Din cele 32 de cărți se vor folosi doar 24 după cum urmează:
+        </p>
+        <div>
+            <table id="cards">
+                <tr>
+                    <td><i>culori</i></td>
+                    <td><i>doiari<br />2 puncte</i></td>
+                    <td><i>treiari<br />3 puncte</i></td>
+                    <td><i>pătrari<br />4 puncte</i></td>
+                    <td><i class="disabled">șesari</i></td>
+                    <td><i class="disabled">șeptari</i></td>
+                    <td><i class="disabled">optari</i></td>
+                    <td><i>nouari<br />zero puncte</i></td>
+                    <td><i>zecari<br />10 puncte</i></td>
+                    <td><i>ași<br />11 puncte</i></td>
+                </tr>
+                <tr>
+                    <td><i>Roșu</i><b class="rosu"></b></td>
+                </tr>
+                <tr>
+                    <td><i>Dubă</i><b class="duba"></b></td>
+                </tr>
+                <tr>
+                    <td><i>Verde</i><b class="verde"></b></td>
+                </tr>
+                <tr>
+                    <td><i>Ghindă</i><b class="ghinda"></b></td>
+                </tr>
+            </table>
+        </div>
+        <p>
+            <i>Doiarul, spre deosebire de treiar, are simbolul în partea de jos (mijloc) iar treiarul în partea de sus
+            (capete).<br />
+            Pe pătrar apare un rege pe un cal, motiv pentru care ii se mai spune și Cal.</i>
+        </p>
+
+        <h2>Scopul jocului</h2>
+        <p>
+            Înainte de începerea jocului se va decide lungimea partidei de joc (ex: 6, 11, 21 de puncte).<br />
+            Câștigă primul jucător (sau echipă) care acumulează cel puțin atâtea puncte câte s-au stabilit. În caz de
+            egalitate se va juca până când un jucător (sau echipă) se detașează.
+        </p>
+
+        <h2 id="asezare">Așezarea jucătorilor la masă</h2>
+        <div>
+            <div class="j-pos">
+                2
+                <span>În 2 (duel)</span>
+                <i class="o me bottom"></i>
+                <i class="o red up"></i>
+            </div>
+            <div class="j-pos">
+                3
+                <span>În 3</span>
+                <i class="o me bottom" title="Tu"></i>
+                <i class="o red left-up" title="Adversar"></i>
+                <i class="o red right-up" title="Adversar"></i>
+            </div>
+            <div class="j-pos">
+                4
+                <span>În 4 (individual)</span>
+                <i class="o me bottom" title="Tu"></i>
+                <i class="o red left" title="Adversar"></i>
+                <i class="o red up" title="Adversar"></i>
+                <i class="o red right" title="Adversar"></i>
+            </div>
+            <div class="j-pos">
+                4
+                <span>În 4 (pe echipe)</span>
+                <i class="o me bottom" title="Tu"></i>
+                <i class="o red left" title="Adversar"></i>
+                <i class="o blue up" title="Coechipier"></i>
+                <i class="o red right" title="Adversar"></i>
+            </div>
+            <br />
+            <div class="hist">
+                <i class="o blue"></i> Coechipier<br />
+                <i class="o red"></i> Adversar<br />
+                <i class="o me"></i> Tu<br />
+            </div>
+        </div>
+
+
+        <h2 id="impartire">Împărțirea cărților</h2>
+        <p>
+            Unul din jucători va amesteca pachetul de cărți iar cel din dreapta (adversarul) va bate sau va tăia
+            pachetul.<br />
+            Prin bătaie se înțelege acceptarea modului în care ele au fost amestecate.<br />
+            Tăiarea presupune participarea la amestecarea pachetului de cărți prin împărțirea pachetului în 2
+            subpachete, punând subpachetul care a rămas dedesubt peste cel ce a fost luat de deasupra.<br />
+            Jucătorul care a amestecat cărțile le va împărți tuturor jucătorilor, începând cu jucătorul din partea
+            stângă și continuând până la el însuși (în sensul acelor de ceasornic).
+
+        </p>
+        <div>
+            <div class="j-pos">
+                ↻
+                <i class="o gray bottom"></i>
+                <i class="o red left"></i>
+                <i class="o red up"></i>
+                <i class="o red right"></i>
+            </div>
+        </div>
+        <p>
+            Cărțile vor fi distribuite în mod egal astfel:<br />
+            În 2: fiecare jucător va primi câte 8 cărți iar restul pachetului (de 8 cărți) va fi pus jos, urmând ca pe
+            parcursul jocului fiecare jucător să mai extragă câte o carte din pachetul rămas jos.<br />
+            În 3: fiecare va primi câte 7 cărți iar restul de 3 se vor pune jos; câștigătorul licitației le va lua pe
+            toate 3 și va da celorlalți jucători câte o carte la alegere din cele 10 pe care le va deține.<br />
+            În 4 clasic: fiecare va primi câte 6 cărți.<br />
+            În 4 standard: fiecare jucător va primi câte 3 cărți urmând ca restul de 3 să le primească după alegerea
+            tromfului. După alegerea tromfului, împărțirea cărților rămase va începe de la jucătorul care a ales
+            tromful.<br />
+            <br />
+            După ce toate cărțile au fost jucate, dacă jocul nu a luat sfârșit, ele vor fi reamestecate de către
+            jucătorul care a primit primul cărți. (cel aflat la stânga jucătorului care le-a amestecat și împărțit
+            inițial)
+        </p>
+
+        <h2 id="licitatie">Licitația</h2>
+        <p>
+            Licitația începe imediat după ce cărțile au fost împărțite. Jucătorii vor licita o singură dată, în ordinea
+            în care au primit cărți (începând jucătorul din stânga celui care le-a împărțit).<br />
+            Licitația presupune ca jucătorul să exprime căte puncte intenționează să acumuleze și avem:
+        </p>
+        <div>
+            <div class="j-dialog">
+                <span>&nbsp;<i>Pas / merge</i></span><span>I<i>33 de puncte</i></span><span>II<i>66 de
+                        puncte</i></span><span>III<i>99 de puncte</i></span><span>IV<i>132 de
+                        puncte</i></span><span>V<i>165 de puncte</i></span><span>VI<i>198 de puncte</i></span>
+            </div>
+        </div>
+        <p>
+            Dacă un jucător nu poate licita strict mai mult decât a licitat (cel mai mult) alt jucător de dinaintea sa,
+            atunci va spune "merge", "merg" sau "bune".
+            Jucătorul care a împărțit cărțile va licita ultimul.
+            <br />
+            Licitația va fi câștigată de jucătorul care a licitat cel mai mult.
+        </p>
+
+        <h2 id="tromf">Alegerea tromfului</h2>
+        <p>
+            Câștigătorul licitației va alege tromful.<br />
+            Tromful va fi una din cele 4 culori:
+        </p>
+        <div>
+            <div class="j-dialog">
+                <b class="rosu"><i>Roșu</i></b><b class="duba"><i>Dubă</i></b><b class="verde"><i>Verde</i></b><b
+                    class="ghinda"><i>Ghindă</i></b>
+            </div>
+        </div>
+        <p>
+            Toate cele 6 cărți de culoarea tromfului se vor numi tromfi.<br />
+            Când se joacă în 2 sau în 4 clasic, tromful va fi culoarea primei cărți jucate (dată jos) de câștigătorul
+            licitației.<br />
+            Când se joacă în 3 sau în 4 standard, câștigătorul licitației va anunța tromful înainte ca restul cărților
+            să fie împărțite iar mai apoi prima carte jucată va putea fi de orice culoare pentru a se evita cazul în
+            care jucătorul nu are tromfi.<br />
+        </p>
+
+        <h2 id="jucare">Jucarea cărților</h2>
+        <p>
+            Primul jucător (câștigătorul licitației) va da prima carte jos cu fața în sus urmând ca în ordinea acelor de
+            ceasornic, fiecare jucător să răspundă obligatoriu cu o carte de aceeași culoare. Jucătorul care nu are nici
+            o carte de aceeași culoare va trebui să joace o carte de culoarea tromfului (un tromf). Dacă jucătorul nu
+            are nici tromf, doar atunci va putea juca orice carte dorește.<br />
+            Când se joacă în 2, atât timp cât au mai rămas jos cărți de luat, fiecare jucător poate juca absolut orice
+            carte dorește indiferent de culoarea cărții de jos pusă de adversar.<br />
+            Următoarele exemple arată ce cărți pot fi jucate în diferite situații:<br />
+        </p>
+        <div>
+            <div class="j-table">
+                <i class="nfo"
+                    title="se poate juca doar treiar de verde și nouar de verde, fiind de aceeași culoare cu prima carte dată jos (zecarul de verde)"></i>
+                <b class="ghinda shadow"></b>
+                <ul>
+                    <li>1<br /><u data-card="Xv"></u></li>
+                    <li>2<br /><u data-card="9r"></u></li>
+                </ul>
+                <div class="hand">
+                    <u data-card="4g"></u><u data-card="3v" class="focus"></u><u data-card="9v" class="focus"></u><u
+                        data-card="Ad"></u><u data-card="4r"></u>
+                </div>
+            </div>
+
+            <div class="j-table">
+                <i class="nfo" title="întru-cât nici o carte nu e ghindă se va juca zecarul de dubă, fiind tromf"></i>
+                <b class="duba shadow"></b>
+                <ul>
+                    <li>1<br /><u data-card="9g"></u></li>
+                </ul>
+                <div class="hand">
+                    <u data-card="Xd" class="focus"></u><u data-card="2r"></u><u data-card="Ar"></u><u
+                        data-card="Av"></u>
+                </div>
+            </div>
+
+            <br />
+
+            <div class="j-table">
+                <i class="nfo"
+                    title="se poate juca orice carte întru-cât nici o carte din mână nu e dubă sau tromf-verde"></i>
+                <b class="verde shadow"></b>
+                <ul>
+                    <li>1<br /><u data-card="4d"></u></li>
+                    <li>2<br /><u data-card="2d"></u></li>
+                </ul>
+                <div class="hand">
+                    <u data-card="Xr" class="focus"></u><u data-card="Ag" class="focus"></u><u data-card="Xg"
+                        class="focus"></u>
+                </div>
+            </div>
+
+            <div class="j-table">
+                <i class="nfo" title="se poate juca orice carte întru-cât au mai rămas cărți de luat de jos"></i>
+                <b class="rosu shadow"></b>
+                <ul>
+                    <li><u class="back"></u></li>
+                    <li>1<br /><u data-card="3g"></u></li>
+                </ul>
+
+                <div class="hand">
+                    <u data-card="3r" class="focus"></u><u data-card="4v" class="focus"></u><u data-card="2g"
+                        class="focus"></u><u data-card="9d" class="focus"></u>
+                </div>
+            </div>
+
+        </div>
+        <p>
+            După ce fiecare jucător a dat jos o carte, cărțile vor fi duse (preluate) de posesorul celui mai mare tromf
+            (sau unicul tromf) dat jos, sau, dacă nu a fost jucat nici un tromf atunci cărțile vor fi duse de jucătorul
+            care a dat cea mai mare carte de culoarea cerută (culoarea primei cărți) sau prima carte dacă nici o carte
+            nu a fost mai mare. Cărțile de alte culori nu vor fi mai mari indiferent de valoare. Valoarea fiecărei cărți
+            a fost prezentată mai sus odată cu întreg pachetul.<br />
+            Următoarele exemple prezintă procedeul explicat:
+        </p>
+        <div>
+            <div class="j-down">
+                <i class="nfo"
+                    title="Pătrarul de roșu este cel mai mare având 4 puncte, nouarul de roșu are zero puncte iar zecarul de dubă nu e nici tromf și nici de aceeași culoare cu prima carte"></i>
+                <b class="verde shadow"></b>
+                <div>1<br /><u data-card="2r"></u></div>
+                <div>2<br /><u data-card="Xd"></u></div>
+                <div class="big">3<br /><u data-card="4r"></u></div>
+                <div>4<br /><u data-card="9r"></u></div>
+            </div>
+            <div class="j-down">
+                <i class="nfo" title="Asul de verde este mare, 11 puncte, dar nouarul de ghindă este tromf"></i>
+                <b class="ghinda shadow"></b>
+                <div>1<br /><u data-card="Av"></u></div>
+                <div class="big">2<br /><u data-card="9g"></u></div>
+            </div>
+            <br />
+            <div class="j-down">
+                <i class="nfo" title="Prima carte este cea mai mare, restul sunt mai mici sau nu sunt tromfi"></i>
+                <b class="rosu shadow"></b>
+                <div class="big">1<br /><u data-card="3g"></u></div>
+                <div>2<br /><u data-card="Ad"></u></div>
+                <div>3<br /><u data-card="2g"></u></div>
+            </div>
+            <div class="j-down">
+                <i class="nfo"
+                    title="zecarul de verde are cea mai mare valoare și e de aceeași culoare cu prima carte, totuși, doiarul și pătrarul de dubă sunt tromfi din care pătrarul e cel mai mare"></i>
+                <b class="duba shadow"></b>
+                <div>1<br /><u data-card="3v"></u></div>
+                <div>2<br /><u data-card="2d"></u></div>
+                <div class="big">3<br /><u data-card="4d"></u></div>
+                <div>4<br /><u data-card="Xv"></u></div>
+            </div>
+
+        </div>
+        <p>
+            Cărțile date jos nu vor mai putea fi jucate, ele vor fi păstrate până la final pentru acumularea
+            punctelor.<br />
+            Dacă se joacă în 2, jucătorul care a dus cărțile jucate va fi primul care extrage o carte din pachetul de
+            jos (în cazul în care au mai rămas), adversarul va extrage al 2-lea.<br />
+            Jucătorul care a preluat cărțile jucate va pune o altă carte jos cu fața în sus și jocul se repetă până când
+            toate cele 24 de cărți au fost jucate.
+        </p>
+
+        <h2 id="iber">Iber (mărit)</h2>
+        <p>
+            Cruce se poate juca "la iber". Lucrul acesta se stabilește la începutul jocului, nu pe parcurs.
+            Jocul la iber presupune ca fiecare jucător să joace tot timpul o carte mai mare decât cea mai mare carte
+            pusă jos.<br />
+            Regula se aplică doar în cazul în care prima carte jucată este tromf sau în cazul în care prima carte nu
+            este tromf și nimeni nu a jucat încă un tromf.<br />
+            Următoarele exemple arată cazurile de joc:
+
+        </p>
+        <div>
+            <div class="j-table">
+                <i class="nfo"
+                    title="Pătrarul este cea mai mare carte de culoare verde de jos iar în mână doar zecarul și asul sunt de aceeași culoare cu prima carte și mai mari ca pătrarul"></i>
+                <b class="ghinda shadow"></b>
+                <ul>
+                    <li>1<br /><u data-card="2v"></u></li>
+                    <li>2<br /><u data-card="Ar"></u></li>
+                    <li>3<br /><u data-card="4v"></u></li>
+                </ul>
+
+                <div class="hand">
+                    <u data-card="Xg"></u><u data-card="3v"></u><u data-card="Xv" class="focus"></u><u data-card="Av"
+                        class="focus"></u>
+                </div>
+            </div>
+
+            <div class="j-table">
+                <i class="nfo"
+                    title="Și treiarul, și nouarul sunt mai mici decât pătrarul. Dacă jucătorul nu are o carte mai mare (la iber) atunci poate juca una mai mică"></i>
+                <b class="duba shadow"></b>
+                <ul>
+                    <li>1<br /><u data-card="4g"></u></li>
+                </ul>
+
+                <div class="hand">
+                    <u data-card="3d"></u><u data-card="2g" class="focus"></u><u data-card="9g" class="focus"></u>
+                </div>
+            </div>
+
+            <br />
+
+            <div class="j-table">
+                <i class="nfo"
+                    title="Zecarul de dubă este cea mai mare carte de jos iar asul de dubă din mână este mai mare, regula de iber se anulează pentru că jos a fost dat un tromf așa ca se va putea juca orice carte de culoarea primei cărți, respectiv, și doiarul de dubă"></i>
+                <b class="rosu shadow"></b>
+                <ul>
+                    <li>1<br /><u data-card="Xd"></u></li>
+                    <li>2<br /><u data-card="2r"></u></li>
+                    <li>3<br /><u data-card="4d"></u></li>
+                </ul>
+
+                <div class="hand">
+                    <u data-card="2d" class="focus"></u><u data-card="Ad" class="focus"></u><u data-card="9r"></u><u
+                        data-card="Xr"></u><u data-card="3g"></u>
+                </div>
+            </div>
+            <div class="j-table">
+                <i class="nfo"
+                    title="Se joacă la iber doar atunci când se poate juca o carte de aceeași culoare cu prima carte dată jos"></i>
+                <b class="verde shadow"></b>
+                <ul>
+                    <li>1<br /><u data-card="3r"></u></li>
+                    <li>2<br /><u data-card="Xv"></u></li>
+                </ul>
+
+                <div class="hand">
+                    <u data-card="9d" class="focus"></u>
+                    <u data-card="Av" class="focus"></u>
+                    <u data-card="9v" class="focus"></u>
+                </div>
+            </div>
+        </div>
+
+        <h2 id="anunt">Anunțul (de mariaj)</h2>
+        <p>
+            Un treiar și un pătrar de aceeași culoare formează "mariaj" sau "anunțare".
+        </p>
+
+        <div>
+            <div class="c-couple">
+                <u data-card="3r"></u><u data-card="4r"></u>
+            </div>
+            <div class="c-couple">
+                <u data-card="3d"></u><u data-card="4d"></u>
+            </div>
+            <div class="c-couple">
+                <u data-card="3v"></u><u data-card="4v"></u>
+            </div>
+            <div class="c-couple">
+                <u data-card="3g"></u><u data-card="4g"></u>
+            </div>
+        </div>
+        <p>
+            Dacă un jucător anunță că are o astfel de pereche în mână va primi 20 de puncte, sau 40 dacă perechea e
+            formată din tromfi.<br />
+            Jucătorul poate anunța perechea numai atunci când va juca una din cele 2 cărți iar ea va fi prima dată jos.
+            Dacă una din cele 2 cărți care alcătuiesc anunțul va fi dată jos în timpul jocului (când jos au fost date
+            alte cărți) atunci anunțul va fi stricat și nu va mai valora nici un punct.
+
+        </p>
+
+        <h2 id="punctare">Punctarea</h2>
+        <p>
+            După ce toate cărțile au fost jucate, fiecare jucător va avea atâtea puncte câte însumează toate cărțile
+            duse (preluate de jos) indiferent de culoarea lor, exact așa cum au fost prezentate mai sus odată cu întreg
+            pachetul.
+            La total se adaugă și punctele cumulate din anunțuri.
+        </p>
+        <div>
+            <div class="c-couple">
+                <u data-card="Xr"></u><u data-card="9r"></u><u data-card="2v"></u><u data-card="Ad"></u><br />= 10 + 0 +
+                2 + 11 =<br />23
+            </div>
+        </div>
+        <p>
+            Dacă un jucător (sau echipă) a dus toate cărțile atunci va avea 4x(2+3+4+0+10+11) = 120<br />
+            Toate anunțurile făcute pot cumula 20+20+20+40 =100.<br />
+            În final, valoarea maximă care poate fi acumulată este 220<br />
+            Pentru a determina câte puncte a acumulat un jucător la scorul total, se împarte valoarea totală la
+            33.<br />
+            Dacă toate cărțile duse și anunțurile cumulează 33 atunci se va primi 1 punct, la fel și dacă s-a cumulat 34
+            sau 65.<br />
+            De la 66 și până la 98 -> 2 puncte<br />
+            De la 99 la 131 -> 3 puncte<br />
+            De la 132 la 164 -> 4 puncte<br />
+            De la 165 la 197 ->5 puncte<br />
+            De la 198 la 220 -> 6 puncte<br />
+            Mai puțin de 33 înseamnă zero puncte.<br />
+
+            Dacă se joacă pe echipe, punctele coechipierilor se vor aduna. ex: 60 + 62 = 122 -> 3 (minim 99 pentru 3,
+            minim 132 pentru 4).<br />
+
+            Dacă jucătorul (sau echipa) care a câștigat licitația nu a reușit să cumuleze atâtea puncte câte a licitat
+            atunci va fi penalizat la scorul total cu numărul de puncte licitate iar punctele cumulate vor fi ignorate.
+            <br />
+            Jucătorii care au pierdut licitația vor primi la scorul total atâtea puncte câte au cumulat fără a fi
+            penalizați și indiferent de cât au licitat.
+        </p>
+
+        <h2 id="trisare">Trișarea</h2>
+        <p>
+            Atât în realitate cât și pe calculator, jucătorii pot trișa (trișarea face parte din joc).<br />
+            Dacă un jucător nu respectă regula de jucare a cărților atunci el poate fi penalizat, de către restul
+            jucătorilor, cu 3 puncte la total. Jocul se va reface și nimeni nu va primi nici un punct.<br />
+            Dacă trișorul (sau coechipierul acestuia) a fost câștigătorul lictației atunci va fi penalizat și cu numărul
+            de puncte licitate.<br />
+            Jucătorii trebuie să urmărească jocul și să depisteze trișorii. Pe calculator e la fel, nu se aplică
+            penalizări automat.<br />
+            Jucătorii pot alege să nu aplice penalizări trișorilor pentru a putea continua jocul.<br />
+            Dacă un jucător e acuzat că a trișat dar se dovedește în final că a jucat corect atunci penalizarea cu 3
+            puncte se va aplică jucătorului care a cerut penalizarea, jocul continuându-se.<br />
+            Când se joacă pe echipe este strict interzis ca partenerii să își comunice (verbal sau prin semne) unul
+            altuia ce cărți dețin sau cum să joace. Acest lucru se numește 'Vorbit în cărți' și se penalizează de
+            asemenea cu 3 puncte.
+        </p>
+
+        <h2 id="duma">Reguli false (duma țiganului)</h2>
+        <p>
+            Se spune că țiganul atunci când s-a trezit cu cărți slabe, a început să inventeze sau să invoce reguli de
+            joc pentru a nu pierde sau pentru a-și crea avantaj lui sau dezavantaj adversarului.<br />
+            Unele reguli au devenit foarte populare dar ele trebuie evitate.<br />
+            Câteva exemple:<br />
+            Cârțile se refac dacă o echipă nu are tromf.
+            <strong>Fals!</strong> E posibil ca un singur jucător să dețină toți tromfii, caz în care se strigă 4 și se
+            continuă jocul cu următoarea rundă.<br />
+            Cărțile se refac dacă un jucător are mai puțin de 12 puncte sau 3 ori 4 nouari.
+            <strong>Fals!</strong> Regula spune că nu ai voie să vorbești în cărți. Dacă un jucător are cărți slabe, nu
+            are voie să spună.<br />
+            Astfel reguli erau invocate de țigan, chiar dacă știa că vor fi refuzate, doar pentru a semnala partenerului
+            că nu deține tromf sau are cărți slabe.<br />
+
+            Nu ai voie să ieși cu 40 dacă ai licitat 1. <strong>Fals!</strong> Acest lucru nu este interzis dar țiganul
+            solicită astfel de reguli pentru a obliga un jucător la riscul de a face -2 cu 40.<br />
+            Dacă ai licitat 1 dar nu ai dus nici o mână, e minus chiar dacă ai avut 40. <strong>Fals!</strong> Regulile
+            de punctare se aplică la fel indiferent de circumstanțe.<br />
+            Invocarea iberului la anunț. <strong>Fals!</strong> Regula de joc cu iber se stabilește la început și e
+            valabilă pe tot parcursul jocului, indiferent de circumstanțe.<br />
+            Când se licitează din 3 cărți, înainte de licitație, jucătorii pot solicita să vadă ultima carte din
+            pachetul de cărți neâmpărțit încă. <string>Interzis!</string><br />
+            Solicitarea de revizuire a cărților care au ieșit din joc, pentru a determina cărțile rămase. Acest aspect
+            trebuie discutat și stabilit de comun acord. Astfel de practici ar trebui totuși evitate.<br />
+        </p>
+
+        <h2 id="sfat">Sfaturi și generalități</h2>
+        <p>
+            Câștigarea licitației este riscantă pentru că jucătorul riscă să fie penalizat, dar dacă licitația e
+            pierdută atunci jucătorul riscă să nu-și poată pune în valoare cărțile. <br />
+            Câștigătorul licitației alege tromful iar tromful duce tot ajutând la adunarea multor cărți și acumularea
+            unui număr mai mare de puncte; de asemenea, anunțul de culoarea tromfului valorează mai mult.<br />
+            Jucătorul trebuie să aleagă ca tromf culoarea din care are cele mai multe cărți sau culoarea din care deține
+            deja un anunț pentru a-și pune cât mai bine în valoare cărțile.<br />
+            Dacă se joacă pe echipe atunci jucătorii trebuie să-și ajute copechipierul pentru a duce cărți de o valoare
+            cât mai mare.<br />
+            Dacă poți intui că adversarul va duce cărțile care au fost date jos, încearcă să joci o carte de valoare cât
+            mai mică.<br />
+            Dacă ești începător încearcă să nu licitezi mai mult de 1 până te obișnuești.<br />
+            Niciodată nu se licitează 6<br />
+            Pe calculator amestecarea și împărțirea cărților se face automat în locul jucătorilor.<br />
+        </p>
+    </article>
+    <script>
+
+
+        cardsSprite("images/cards3.jpg", 4, 9, 2, function (d) {
+
+            var type = 'rdvg', value = '2346789XA';
+            var cnames = ['rosu', 'duba', 'verde', 'ghinda'];
+            var clabels = ['Roșu', 'Dubă', 'Verde', 'Ghindă'];
+
+            var cards = document.querySelectorAll('#cards tr');
+            for (var i = 0; i < type.length; i++) {
+                var row = cards[i + 1];
+                for (var j = 0; j < value.length; j++) {
+                    var c = value[j] + type[i];
+                    var cell = document.createElement('td');
+                    var card = document.createElement('u');
+                    card.setAttribute('data-card', c);
+                    if (j > 2 && j < 6) card.setAttribute('data-disabled', true);
+                    cell.appendChild(card);
+                    row.appendChild(cell);
+                }
+            }
+
+            var ecards = document.getElementsByTagName('u');
+            for (var k = 0; k < ecards.length; k++) {
+                var c = ecards[k];
+                var attr = c.getAttribute('data-card');
+                if (attr) {
+                    //c.title = p[0] + " de " + p[1];
+                    c.appendChild(d(type.indexOf(attr[1]), value.indexOf(attr[0]), c.getAttribute('data-disabled')));
+                }
+            }
+        });
+
+        (function (elems) {
+            for (var i = 0; i < elems.length; i++) elems[i].addEventListener('click', function () { alert(this.title); });
+        })(document.querySelectorAll('.nfo'))
+    </script>
+    <footer>
+        &copy; TROMF.ro | <a href="termeni-si-conditii.html" target="_blank">Securitatea datelor | Termeni și
+            condiții</a>
+    </footer>
+
+</body>
+
+</html>
