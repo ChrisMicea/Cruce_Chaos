@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using CruceChaos.Core.Cards;
 using CruceChaos.Core.Players;
+using CruceChaos.Core.Rules;
 
 namespace CruceChaos.Core.Game
 {
@@ -24,10 +25,21 @@ namespace CruceChaos.Core.Game
         private readonly Deck _deck;
         private readonly RoundParticipant[] _participants;
         private readonly IPlayerController[] _controllers;
+        private readonly LegalMoveEvaluator _legalMoves;
         private readonly Action<string> _log;
 
         /// <summary>Index into <see cref="_participants"/> of whoever leads the next trick.</summary>
         private int _leaderIndex;
+
+        /// <summary>
+        /// The round's trump suit. Null until established. Per the current
+        /// rules, trump is set to the suit of the very first card played in the
+        /// round (see <see cref="EstablishTrumpIfUnset"/>). Isolating trump
+        /// establishment in one method means a future variant (e.g. the winning
+        /// bidder declares trump before any card is played) only changes WHERE
+        /// that method is called, not any of the code that reads _trump.
+        /// </summary>
+        private Suit? _trump;
 
         /// <summary>
         /// Creates the engine for one round.
@@ -38,18 +50,26 @@ namespace CruceChaos.Core.Game
         /// </summary>
         /// <param name="players">The two match-level players.</param>
         /// <param name="controllers">The decision makers for each player.</param>
+        /// <param name="ruleSet">
+        /// The ordered legality rules in play for this round (built by
+        /// <see cref="RuleSetFactory"/> from the mode + player options).
+        /// </param>
         /// <param name="seed">Optional RNG seed for a reproducible round.</param>
         /// <param name="log">
         /// Optional callback to receive human-readable play-by-play messages.
         /// Pass null to suppress output.
         /// </param>
-        public RoundEngine(Player[] players, IPlayerController[] controllers, int? seed = null, Action<string> log = null)
+        public RoundEngine(Player[] players, IPlayerController[] controllers, RuleSet ruleSet, int? seed = null, Action<string> log = null)
         {
             if (players.Length != 2 || controllers.Length != 2)
             {
                 throw new ArgumentException("This engine supports exactly 2 players.");
             }
 
+            // Forward the evaluator's safety-guard warnings into our log. The
+            // lambda defers to _log at call time, so it is fine that _log is
+            // assigned a few lines below this.
+            _legalMoves = new LegalMoveEvaluator(ruleSet, msg => _log(msg));
             _deck = new Deck(seed);
             _participants = new RoundParticipant[]
             {
@@ -117,6 +137,25 @@ namespace CruceChaos.Core.Game
         }
 
         /// <summary>
+        /// Sets the round's trump suit from the first card played, if it has not
+        /// been set yet. Returns true if this call established trump (so the
+        /// caller can log it), false if trump was already set.
+        ///
+        /// This is the single point of trump establishment; see the field doc
+        /// on <see cref="_trump"/> for why that matters for future variants.
+        /// </summary>
+        private bool EstablishTrumpIfUnset(Card firstCard)
+        {
+            if (_trump.HasValue)
+            {
+                return false;
+            }
+
+            _trump = firstCard.Suit;
+            return true;
+        }
+
+        /// <summary>
         /// Each participant plays one card, starting with the current leader.
         /// </summary>
         private Trick PlayOneTrick()
@@ -129,14 +168,21 @@ namespace CruceChaos.Core.Game
                 RoundParticipant participant = _participants[seat];
                 IPlayerController controller = _controllers[seat];
 
-                // Simplified: all cards in hand are legal (no trump/follow rules yet).
-                IReadOnlyList<Card> legalMoves = participant.Hand.Cards;
+                // Legality is computed by the rule pipeline from the current
+                // state (hand, trick, trump, draw-pile size), so the engine
+                // stays mode-agnostic.
+                var context = new LegalMoveContext(participant.Hand, trick, _trump, drawPileCount: _deck.Count);
+                IReadOnlyList<Card> legalMoves = _legalMoves.LegalMoves(context);
 
                 Card chosen = controller.ChooseCard(participant, legalMoves, trick);
                 participant.Hand.Remove(chosen);
                 trick.Add(participant, chosen);
 
-                _log($"  {participant.Player.Name} plays {chosen}");
+                // The first card played in the whole round fixes the trump suit.
+                bool trumpJustSet = EstablishTrumpIfUnset(chosen);
+
+                _log($"  {participant.Player.Name} plays {chosen}" +
+                     (trumpJustSet ? $"   (trump is now {chosen.Suit})" : string.Empty));
             }
 
             return trick;
@@ -148,7 +194,7 @@ namespace CruceChaos.Core.Game
         /// </summary>
         private void ResolveTrick(Trick trick)
         {
-            RoundParticipant winner = trick.Winner;
+            RoundParticipant winner = trick.DetermineWinner(_trump);
             int points = trick.PointValue;
 
             winner.AddCapturedPoints(points);

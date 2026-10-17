@@ -42,11 +42,11 @@ namespace CruceChaos.Core.Game
     /// A single trick: the cards each participant plays in turn, and the rule
     /// for who wins it.
     ///
-    /// SIMPLIFIED (no-trump) winner rule for this first milestone: the highest
-    /// <see cref="Card.Strength"/> among cards of the LED suit wins. Cards of
-    /// any other suit cannot win, because without trump an off-suit card is
-    /// just a discard. Trump will later add a second, higher-priority suit that
-    /// can beat the led suit; that logic will slot into <see cref="Winner"/>.
+    /// Winner rule (see <see cref="DetermineWinner"/>):
+    ///   - If any trump was played, the HIGHEST trump wins (trump beats every
+    ///     non-trump regardless of the led suit).
+    ///   - Otherwise the highest card of the LED suit wins; off-suit non-trump
+    ///     cards cannot win (they are discards).
     /// </summary>
     public sealed class Trick : ITrickContext
     {
@@ -80,37 +80,56 @@ namespace CruceChaos.Core.Game
         }
 
         /// <summary>
-        /// The participant who wins the trick under the simplified no-trump
-        /// rule. Returns null only if no cards have been played yet.
+        /// The participant who wins the trick, given the round's
+        /// <paramref name="trump"/> suit (null if the round has no trump).
+        /// Returns null only if no cards have been played yet.
         /// </summary>
-        public RoundParticipant Winner
+        public RoundParticipant DetermineWinner(Suit? trump)
         {
-            get
+            if (_plays.Count == 0)
             {
-                if (_plays.Count == 0)
-                {
-                    return null;
-                }
-
-                Suit led = LedSuit;
-                PlayedCard best = _plays[0];
-
-                foreach (PlayedCard play in _plays)
-                {
-                    // Only cards of the led suit are in contention (no trump yet).
-                    if (play.Card.Suit != led)
-                    {
-                        continue;
-                    }
-
-                    if (play.Card.Strength > best.Card.Strength)
-                    {
-                        best = play;
-                    }
-                }
-
-                return best.Participant;
+                return null;
             }
+
+            // The "contested suit" is trump if any trump was played, else the
+            // led suit. Only cards of that suit can win.
+            bool trumpPlayed = trump.HasValue && AnyOfSuit(trump.Value);
+            Suit contested = trumpPlayed ? trump.Value : LedSuit;
+
+            PlayedCard best = default;
+            bool haveBest = false;
+
+            foreach (PlayedCard play in _plays)
+            {
+                if (play.Card.Suit != contested)
+                {
+                    continue;
+                }
+
+                if (!haveBest || play.Card.Strength > best.Card.Strength)
+                {
+                    best = play;
+                    haveBest = true;
+                }
+            }
+
+            // The led suit is always present (the first play), and trump is only
+            // the contested suit when some trump was played, so a winner always
+            // exists past the empty-trick guard above.
+            return best.Participant;
+        }
+
+        private bool AnyOfSuit(Suit suit)
+        {
+            foreach (PlayedCard play in _plays)
+            {
+                if (play.Card.Suit == suit)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }
