@@ -1,14 +1,16 @@
 using System;
 using CruceChaos.Core.Game;
 using CruceChaos.Core.Players;
+using CruceChaos.Core.Players.AI;
+using CruceChaos.Core.Players.AI.GreedyHeuristic;
 using CruceChaos.Core.Rules;
 
 namespace CruceChaos.Sandbox
 {
     /// <summary>
     /// Standalone console harness for the pure-C# Core. Runs one full round of
-    /// the simplified (no-trump) 2-player game and prints the play-by-play plus
-    /// the final captured-point tallies.
+    /// the 2-player game (follow-suit + trump, no bidding yet) and prints the
+    /// play-by-play plus the final captured-point tallies.
     ///
     /// This has no Unity dependency; run it with `dotnet run` from Sandbox/.
     /// </summary>
@@ -30,10 +32,12 @@ namespace CruceChaos.Sandbox
                 new Player("Bob")
             };
 
+            // Alice = baseline (first legal move), Bob = greedy heuristic, so a
+            // single round shows the two engines head to head.
             var controllers = new IPlayerController[]
             {
                 new FirstLegalMoveController(),
-                new FirstLegalMoveController()
+                new GreedyHeuristicController()
             };
 
             // Second CLI arg "raise" turns on the optional must-raise rule, to

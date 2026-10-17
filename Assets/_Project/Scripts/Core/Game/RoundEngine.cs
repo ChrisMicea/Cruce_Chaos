@@ -161,6 +161,10 @@ namespace CruceChaos.Core.Game
         private Trick PlayOneTrick()
         {
             Trick trick = new Trick();
+            trick.SetTrump(_trump);
+            // Draw-pile size is fixed for the duration of a trick (draws happen
+            // between tricks), so set it once here for controllers to read.
+            trick.SetDrawPileCount(_deck.Count);
 
             for (int i = 0; i < 2; i++)
             {
@@ -180,6 +184,13 @@ namespace CruceChaos.Core.Game
 
                 // The first card played in the whole round fixes the trump suit.
                 bool trumpJustSet = EstablishTrumpIfUnset(chosen);
+                if (trumpJustSet)
+                {
+                    // Reflect the newly-established trump to later players in
+                    // this same trick (the leader had no trump info yet, which
+                    // is correct — they are the one who just set it).
+                    trick.SetTrump(_trump);
+                }
 
                 _log($"  {participant.Player.Name} plays {chosen}" +
                      (trumpJustSet ? $"   (trump is now {chosen.Suit})" : string.Empty));

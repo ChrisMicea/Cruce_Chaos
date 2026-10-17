@@ -36,6 +36,20 @@ namespace CruceChaos.Core.Game
         /// Only meaningful when <see cref="IsEmpty"/> is false.
         /// </summary>
         Suit LedSuit { get; }
+
+        /// <summary>
+        /// The round's trump suit, or null if the round has no trump yet. This
+        /// is public information (established by the first card of the round),
+        /// exposed so controllers can make trump-aware decisions.
+        /// </summary>
+        Suit? Trump { get; }
+
+        /// <summary>
+        /// Number of cards still in the draw pile. Public information, exposed
+        /// so controllers can tell whether the no-follow-suit draw phase is
+        /// still in effect (pile &gt; 0).
+        /// </summary>
+        int DrawPileCount { get; }
     }
 
     /// <summary>
@@ -57,6 +71,23 @@ namespace CruceChaos.Core.Game
         public bool IsEmpty => _plays.Count == 0;
 
         public Suit LedSuit => _plays[0].Card.Suit;
+
+        /// <summary>
+        /// The round's trump suit as seen by controllers. The engine keeps this
+        /// in sync via <see cref="SetTrump"/>; it is null until trump is
+        /// established (which, for the first trick of the round, happens partway
+        /// through the trick when its first card is played).
+        /// </summary>
+        public Suit? Trump { get; private set; }
+
+        /// <summary>Sets the trump suit the controllers will see for this trick.</summary>
+        public void SetTrump(Suit? trump) => Trump = trump;
+
+        /// <summary>Cards left in the draw pile, as seen by controllers.</summary>
+        public int DrawPileCount { get; private set; }
+
+        /// <summary>Sets the draw-pile count the controllers will see for this trick.</summary>
+        public void SetDrawPileCount(int count) => DrawPileCount = count;
 
         /// <summary>Records a participant's play into the trick.</summary>
         public void Add(RoundParticipant participant, Card card)

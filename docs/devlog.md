@@ -183,3 +183,65 @@ The follow-suit/trump *legality* and the trick-winner logic are now trump-aware,
 but there is still no bidding, no announcements (anuntari / 40-20), and no
 conversion of captured card points into the 1–6 match score. A round still just
 reports raw captured points out of 120.
+
+### AI engines: structure, baseline relocation, greedy heuristic -- Christian
+
+**AI engine structure.** Established a convention for AI opponents:
+
+- Controllers live under `Assets/_Project/Scripts/Core/Players/AI/<Engine>/` and
+  implement `IPlayerController` (pure C#, no Unity). The rules pipeline hands
+  each one an already-legal move set, so an AI can never play illegally — it
+  only chooses among legal options.
+- Each engine has a plain-language design doc under `docs/ai/`, which is the
+  **source of truth for its heuristics**: edit the doc first, then bring the
+  code in line. `docs/ai/README.md` is the roster + the shared information
+  model.
+
+**Information model (what a controller may see).** Only public information, so
+no AI can cheat structurally: its own hand, the current trick, the trump suit,
+and (reserved for later) completed-trick history. Opponents' hands and the draw
+pile's contents are never exposed. "Memory" is a graded, per-engine *consumption*
+choice over the public trick history — low-memory engines look only at their own
+won tricks, high-memory engines look at everything — not something the engine
+enforces. The history substrate itself is deferred (YAGNI) until the first
+engine that actually uses it; only `Trump` and `DrawPileCount` were added to the
+context now.
+
+**Baseline relocated.** `FirstLegalMoveController` moved from `Sandbox/` into
+`Core/Players/AI/`. It was always going to be shipped game code (the real game
+plugs AIs in), not a test-only driver, so it belongs in Core. The sandbox picks
+it up automatically through the existing `<Compile Include>` glob — no csproj
+change.
+
+**`ITrickContext` extended.** Added `Suit? Trump` and `int DrawPileCount`, both
+public round facts controllers need. `Trick` holds them (set by the engine when
+each trick is created). Subtlety: on the first trick of a round, trump is null
+when the leader chooses — correct, since the leader is the one establishing it;
+the engine refreshes the trick's trump right after it is set so the second
+player sees it.
+
+**Greedy heuristic engine implemented.** See
+[`docs/ai/greedy-heuristic.md`](ai/greedy-heuristic.md) for the full spec. In
+one breath: when following, win with the cheapest card that wins, else dump the
+lowest-point card (keeping trump); when leading during the draw phase, bank the
+highest-value non-trump card (there is no follow-suit obligation yet and you
+refill your hand, so hoarding is pointless); when leading after the pile is
+empty, lead the cheapest non-trump; never lead trump. The draw-phase lead rule
+also governs the opening lead, so trump ends up being the suit of the
+highest-value non-trump card led — a deliberate simplification.
+
+**Measured vs. the baseline (50 seeds each), 120-pt checksum held throughout:**
+
+| Greedy seat         | Greedy wins | Baseline wins | Ties | Greedy avg | Baseline avg |
+| ------------------- | ----------- | ------------- | ---- | ---------- | ------------ |
+| Second player       | 30          | 19            | 1    | 63         | 56           |
+| First player (lead) | 40          | 10            | 0    | 75         | 44           |
+
+Honest reading: the engine is medium-tier by design, not a blowout from seat 1,
+because the "cu carti de jos" draw phase suspends follow-suit for the first third
+of the round, which caps how much a current-trick-only heuristic can control.
+But its strength is concentrated in **leading**, so holding the opening lead
+every round (seat 0) makes it dominant (40/10). This surfaces a fairness
+requirement for later multi-round matches: **rotate the opening lead between
+rounds**, mirroring the real game's rotating dealer. Not addressed yet (there is
+no multi-round match loop).
