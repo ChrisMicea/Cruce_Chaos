@@ -1,6 +1,7 @@
 using System;
 using CruceChaos.Core.Game;
 using CruceChaos.Core.Players;
+using CruceChaos.Core.Rules;
 
 namespace CruceChaos.Sandbox
 {
@@ -35,9 +36,15 @@ namespace CruceChaos.Sandbox
                 new FirstLegalMoveController()
             };
 
-            Console.WriteLine($"=== Cruce Chaos — single round (seed {seed}) ===\n");
+            // Second CLI arg "raise" turns on the optional must-raise rule, to
+            // demonstrate start-of-game rule customization.
+            bool mustRaise = args.Length > 1 && args[1] == "raise";
+            var options = new RuleSetFactory.Options { MustRaiseWhenFollowing = mustRaise };
+            RuleSet ruleSet = RuleSetFactory.TwoPlayerDrawPile(options);
 
-            var engine = new RoundEngine(players, controllers, seed, Console.WriteLine);
+            Console.WriteLine($"=== Cruce Chaos — single round (seed {seed}, must-raise {(mustRaise ? "ON" : "off")}) ===\n");
+
+            var engine = new RoundEngine(players, controllers, ruleSet, seed, Console.WriteLine);
             RoundParticipant[] result = engine.Play();
 
             Console.WriteLine("=== Round over ===");
