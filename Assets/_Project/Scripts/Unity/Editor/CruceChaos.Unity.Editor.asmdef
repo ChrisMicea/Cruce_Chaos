@@ -1,0 +1,19 @@
+{
+    "name": "CruceChaos.Unity.Editor",
+    "rootNamespace": "CruceChaos.Unity.Editor",
+    "references": [
+        "CruceChaos.Unity",
+        "CruceChaos.Core"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
