@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using CruceChaos.Core.Cards;
@@ -5,72 +7,85 @@ using CruceChaos.Core.Cards;
 namespace CruceChaos.Unity
 {
     /// <summary>
-    /// Manages the two card slots in the centre of the table that display the
-    /// cards played in the current trick.
+    /// Displays the cards played in the current trick as a single central pile.
+    /// Each card is placed slightly offset from the previous so both are visible.
     ///
-    /// SCENE SETUP:
-    ///   Create a GameObject "TrickArea" with this component.
-    ///   Add two child GameObjects "HumanSlot" and "AISlot", each with an
-    ///   Image component — these are the card display slots.
-    ///   Optionally add a "WinnerFlash" Image child that plays a brief colour
-    ///   flash when the trick is resolved.
+    /// SCENE SETUP (simplified — no child slots needed):
+    ///   Create a GameObject "TrickArea" anywhere inside the Canvas.
+    ///   Add this component to it.
+    ///   Set its RectTransform to centre-anchor, size ~300x400.
+    ///   Optionally add a child Image "WinnerFlash" (stretch to fill) for the
+    ///   flash effect — assign it in the Inspector.
+    ///
+    ///   That's it. No HumanSlot / AISlot children required.
     /// </summary>
     public class TrickAreaView : MonoBehaviour
     {
-        [Header("Trick Slots")]
-        [Tooltip("Image that shows the card played by the human (bottom player).")]
-        [SerializeField] private Image _humanSlot;
+        [Header("Card Display")]
+        [Tooltip("Size of each card image spawned in the pile.")]
+        [SerializeField] private Vector2 _cardSize = new Vector2(150f, 225f);
 
-        [Tooltip("Image that shows the card played by the AI (top player).")]
-        [SerializeField] private Image _aiSlot;
+        [Tooltip("How much each successive card is offset from the previous (gives a fanned look).")]
+        [SerializeField] private Vector2 _stackOffset = new Vector2(12f, -12f);
 
         [Header("Trump Indicator")]
-        [Tooltip("Image that shows the trump suit icon (set via SetTrump).")]
+        [Tooltip("Optional Image that shows the trump suit icon.")]
         [SerializeField] private Image _trumpIcon;
 
         [Tooltip("Sprites for each suit in order: Green, Red, Acorn, Bell.")]
-        [SerializeField] private Sprite[] _suitIcons; // 4 elements, indexed by (int)Suit
+        [SerializeField] private Sprite[] _suitIcons;
 
-        [Header("Trick Winner Flash")]
+        [Header("Winner Flash")]
         [SerializeField] private Image _winnerFlash;
-        [SerializeField] private Color _winFlashColour  = new Color(1f, 0.85f, 0f, 0.6f);  // gold
-        [SerializeField] private Color _loseFlashColour = new Color(0.7f, 0.2f, 0.2f, 0.6f); // red
-        [SerializeField] private float _flashDuration   = 0.6f;
+        [SerializeField] private Color _winFlashColour  = new Color(1f, 0.85f, 0f, 0.6f);
+        [SerializeField] private Color _loseFlashColour = new Color(0.7f, 0.2f, 0.2f, 0.6f);
+        [SerializeField] private float _flashDuration   = 0.8f;
 
-        // ---- Public API -------------------------------------------------------
+        // Cards currently visible in the pile this trick.
+        private readonly List<Image> _pileImages = new List<Image>();
+
+        // ── Public API ─────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Shows a card sprite in the human player's trick slot.
+        /// Adds a card face-up to the central pile.
+        /// Call once per card played (human or AI — same method for both).
         /// </summary>
-        public void ShowHumanCard(Sprite sprite)
+        public void AddCardToPile(Sprite sprite)
         {
-            if (_humanSlot == null) return;
-            _humanSlot.sprite  = sprite;
-            _humanSlot.enabled = sprite != null;
+            // Create a new Image as a child of this RectTransform.
+            GameObject go = new GameObject("TrickCard", typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(transform, false);
+
+            RectTransform rt = go.GetComponent<RectTransform>();
+            rt.sizeDelta = _cardSize;
+
+            // Stack offset: each successive card shifts slightly.
+            int index = _pileImages.Count;
+            rt.anchoredPosition = _stackOffset * index;
+
+            // Assign the sprite.
+            Image img = go.GetComponent<Image>();
+            img.sprite = sprite;
+            img.preserveAspect = true;
+
+            // Ensure this card renders on top of previous ones.
+            go.transform.SetAsLastSibling();
+
+            _pileImages.Add(img);
         }
 
         /// <summary>
-        /// Shows a card sprite in the AI player's trick slot.
-        /// </summary>
-        public void ShowAICard(Sprite sprite)
-        {
-            if (_aiSlot == null) return;
-            _aiSlot.sprite  = sprite;
-            _aiSlot.enabled = sprite != null;
-        }
-
-        /// <summary>
-        /// Clears both trick slots (call at the start of each new trick).
+        /// Clears the pile (call at the start of each new trick).
         /// </summary>
         public void ClearTrick()
         {
-            ShowHumanCard(null);
-            ShowAICard(null);
+            foreach (Image img in _pileImages)
+                if (img != null) Destroy(img.gameObject);
+            _pileImages.Clear();
         }
 
         /// <summary>
-        /// Updates the trump indicator icon.
-        /// Pass null to hide the indicator (no trump established yet).
+        /// Updates the trump suit icon. Pass null to hide it.
         /// </summary>
         public void SetTrump(Suit? trump)
         {
@@ -82,14 +97,12 @@ namespace CruceChaos.Unity
                 return;
             }
 
-            int idx = (int)trump.Value;
-            _trumpIcon.sprite  = _suitIcons[idx];
+            _trumpIcon.sprite  = _suitIcons[(int)trump.Value];
             _trumpIcon.enabled = true;
         }
 
         /// <summary>
-        /// Plays a brief colour flash on the trick area.
-        /// <paramref name="humanWon"/> true = gold (human wins), false = red (AI wins).
+        /// Flashes the trick area gold (human won) or red (AI won).
         /// </summary>
         public void FlashWinner(bool humanWon)
         {
@@ -98,19 +111,19 @@ namespace CruceChaos.Unity
             StartCoroutine(FlashRoutine(humanWon ? _winFlashColour : _loseFlashColour));
         }
 
-        // ---- Private ----------------------------------------------------------
+        // ── Private ────────────────────────────────────────────────────────────
 
-        private System.Collections.IEnumerator FlashRoutine(Color flashColour)
+        private IEnumerator FlashRoutine(Color colour)
         {
-            _winnerFlash.color   = flashColour;
+            _winnerFlash.color   = colour;
             _winnerFlash.enabled = true;
 
             float elapsed = 0f;
             while (elapsed < _flashDuration)
             {
                 elapsed += Time.deltaTime;
-                float alpha = Mathf.Lerp(flashColour.a, 0f, elapsed / _flashDuration);
-                _winnerFlash.color = new Color(flashColour.r, flashColour.g, flashColour.b, alpha);
+                float a = Mathf.Lerp(colour.a, 0f, elapsed / _flashDuration);
+                _winnerFlash.color = new Color(colour.r, colour.g, colour.b, a);
                 yield return null;
             }
 
