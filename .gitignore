@@ -121,3 +121,5 @@ InitTestScene*.unity*
 # rules above would otherwise exclude.
 !/Sandbox/**/*.csproj
 !/Sandbox/**/*.sln
+
+*.meta
