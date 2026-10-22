@@ -299,12 +299,12 @@ namespace CruceChaos.Unity
             Sprite sprite = _spriteRegistry != null ? _spriteRegistry.GetSprite(card) : null;
             if (isHuman)
             {
-                _trickAreaView?.ShowHumanCard(sprite);
+                _trickAreaView?.AddCardToPile(sprite);
                 RemoveCardViewFromHand(card);
             }
             else
             {
-                _trickAreaView?.ShowAICard(sprite);
+                _trickAreaView?.AddCardToPile(sprite);
                 RemoveAICardBack();
             }
 
@@ -381,8 +381,8 @@ namespace CruceChaos.Unity
             int count = cards.Count;
             if (count == 0) return;
 
-            float cardWidth = 150f;
-            float spacing   = 14f;
+            float cardWidth = 220f;
+            float spacing   = 18f;
             float totalWidth = count * cardWidth + (count - 1) * spacing;
             float startX    = -totalWidth * 0.5f + cardWidth * 0.5f;
 
