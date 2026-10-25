@@ -27,14 +27,22 @@ namespace CruceChaos.Core.Game
         /// <summary>Seat index of the bid winner (the opening leader), or -1 if none.</summary>
         public int BidWinnerSeat { get; }
 
+        /// <summary>
+        /// Team index of the bidding side (the team that must make the contract),
+        /// or -1 if none. This is the scorer's "which unit is the bidding side"
+        /// key, recorded here so the scorer need not re-derive seat → team.
+        /// </summary>
+        public int BidWinnerTeam { get; }
+
         /// <summary>The trump suit that was established for the round, or null if none.</summary>
         public Suit? Trump { get; }
 
-        public RoundResult(ScoringUnit[] scoringUnits, int? winningBid, int bidWinnerSeat, Suit? trump)
+        public RoundResult(ScoringUnit[] scoringUnits, int? winningBid, int bidWinnerSeat, int bidWinnerTeam, Suit? trump)
         {
             ScoringUnits = scoringUnits;
             WinningBid = winningBid;
             BidWinnerSeat = bidWinnerSeat;
+            BidWinnerTeam = bidWinnerTeam;
             Trump = trump;
         }
 

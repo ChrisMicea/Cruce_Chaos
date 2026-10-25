@@ -421,3 +421,57 @@ was correct; re-verified with a corrected parse.
 **Deferred still:** score conversion + announcements (the bids recorded on
 `RoundResult` remain unscored); the multi-round match loop with rotating
 opening lead; AI draft-gambling / overbidding (greedy stays conservative).
+
+### Step 5: score conversion + match loop -- Christian
+
+Turned the recorded-but-unused bids into actual match scoring, and added the
+multi-round match loop. (Announcements/marriages split off to a future step 6.)
+
+**Round scoring (`Core/Game/Scoring/`).** `IRoundScorer` (pluggable policy) +
+`StandardRoundScorer`:
+
+- Victory points a team earns = `capturedPoints / 33` (integer division).
+- Non-bidding teams always ADD their earned points.
+- Bidding team: if earned ≥ bid (contract made) ADD earned; else (missed)
+  SUBTRACT the **bid** value. (Confirmed with Christian: miss deducts the bid,
+  not the earned points.)
+
+To let the scorer know which team is the bidding side, `RoundResult` now also
+records `BidWinnerTeam` (the engine fills it from `TeamOfSeat[bidWinnerSeat]`).
+
+**Match loop (`MatchEngine`).** Owns the players/controllers/config/scorer and
+loops `RoundEngine` rounds until the match-end condition, then returns a
+`MatchResult` (winning team + its players + score). Per round it:
+
+- rotates the starting bidder (`(round-1) % playerCount`) — the fairness fix for
+  the opening-lead advantage we measured earlier; `RoundEngine` gained a
+  `startingBidderSeat` parameter for this,
+- varies the per-round seed (matchSeed + roundNumber) so rounds differ while the
+  match stays reproducible,
+- applies each team's delta in **lockstep** to every member's
+  `Player.MatchScore` (team scoring representation (a): teammates' scores always
+  move together, so a team's score = any member's score).
+
+**Match-end condition.** A team wins once it reaches `MatchConfig.TargetScore`
+(default 11, configurable) AND leads the runner-up by **≥ 2**. If the top two are
+within 1 — even past the target — play continues until the gap is ≥ 2 (Christian's
+rule 3). Verified this triggers: a 2v2 match sat at 10–10, went 12–11 (past
+target but only 1 clear → kept playing), then ended 14–12.
+
+**Engine cleanups riding along.** Removed the last stale `EstablishTrumpIfUnset`
+doc reference; forced-1 doc corrected to "last to pass"; bidding now starts at
+the rotated `startingBidderSeat` instead of hardcoded seat 0.
+
+**Sandbox.** Now plays a full MATCH by default (round-by-round deltas +
+standings + winner). The old detailed single-round view (per-trick log, per-player
+own/team points) is still available via a `round` arg.
+
+**Verification.** All five modes (1v1, 2v2, 2v2draft, 1v1v1, ffa4) run complete
+matches that always terminate (no tiebreak infinite loop) across multiple seeds.
+The greedy seats beat the baseline (seat 0) in essentially every match, as
+expected over a full match where the stronger engine compounds its edge.
+
+**Deferred to step 6:** announcements / marriages (40-20), which also pull in the
+">3 bid requires an announcement" gate we skipped. The greedy bid tuning remains
+provisional but now has a real signal available (match win rates) for future
+tuning.

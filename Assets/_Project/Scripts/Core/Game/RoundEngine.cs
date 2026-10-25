@@ -49,10 +49,14 @@ namespace CruceChaos.Core.Game
         private bool _firstPlayOfRound = true;
 
         /// <summary>
-        /// The round's trump suit. Null until established (currently by the
-        /// first card played; see <see cref="EstablishTrumpIfUnset"/>).
+        /// The round's trump suit. Declared by the bid winner before play (see
+        /// <see cref="DeclareTrump"/>); null until then, or if the mode has no
+        /// trump.
         /// </summary>
         private Suit? _trump;
+
+        /// <summary>Seat that bids first this round (rotated across rounds by the match loop).</summary>
+        private readonly int _startingBidderSeat;
 
         /// <summary>
         /// Creates the engine for one round.
@@ -63,16 +67,19 @@ namespace CruceChaos.Core.Game
         /// <param name="ruleSet">The ordered legality rules for this round.</param>
         /// <param name="seed">Optional RNG seed for a reproducible round.</param>
         /// <param name="log">Optional play-by-play log callback; null to suppress.</param>
+        /// <param name="startingBidderSeat">Seat that bids first (match loop rotates this across rounds).</param>
         public RoundEngine(
             Player[] players,
             IPlayerController[] controllers,
             MatchConfig config,
             RuleSet ruleSet,
             int? seed = null,
-            Action<string> log = null)
+            Action<string> log = null,
+            int startingBidderSeat = 0)
         {
             _config = config;
             _playerCount = config.PlayerCount;
+            _startingBidderSeat = ((startingBidderSeat % config.PlayerCount) + config.PlayerCount) % config.PlayerCount;
 
             if (players.Length != _playerCount || controllers.Length != _playerCount)
             {
@@ -126,7 +133,8 @@ namespace CruceChaos.Core.Game
             DeclareTrump();
             RunDraftIfNeeded();
             PlayAllTricks();
-            return new RoundResult(_scoringUnits, _winningBid, _bidWinnerSeat, _trump);
+            int bidWinnerTeam = _bidWinnerSeat >= 0 ? _config.TeamOfSeat[_bidWinnerSeat] : -1;
+            return new RoundResult(_scoringUnits, _winningBid, _bidWinnerSeat, bidWinnerTeam, _trump);
         }
 
         /// <summary>Participants in seat order (read-only), e.g. for reporting.</summary>
@@ -220,8 +228,10 @@ namespace CruceChaos.Core.Game
         /// drops a seat out; a numeric bid must exceed the current high bid and
         /// not exceed the configured maximum (an out-of-range bid is treated as
         /// a pass). Bidding ends when at most one seat is still in. If every
-        /// seat passes, the FORCED-1 rule applies: seat 0 is forced to a
-        /// contract of 1. The winner becomes the opening leader.
+        /// seat passes, the FORCED-1 rule applies: the last player to pass is
+        /// forced to a contract of 1. The winner becomes the opening leader.
+        /// Bidding begins at <see cref="_startingBidderSeat"/> (rotated per round
+        /// by the match loop).
         /// </summary>
         private void RunBidding()
         {
@@ -236,9 +246,9 @@ namespace CruceChaos.Core.Game
             int highBid = 0;          // 0 == no numeric bid yet
             int highSeat = -1;
             int activeCount = _playerCount;
-            int lastPasserSeat = 0;   // seat of the most recent pass (for forced-1)
+            int lastPasserSeat = _startingBidderSeat;  // seat of the most recent pass (for forced-1)
 
-            int seat = 0;
+            int seat = _startingBidderSeat;
             // Cycle through seats until at most one remains active. A seat that
             // is the sole remaining active bidder with a standing bid wins.
             while (activeCount > 1 || (activeCount >= 1 && highSeat < 0))

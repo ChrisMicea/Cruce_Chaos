@@ -50,6 +50,12 @@ namespace CruceChaos.Core.Game
         /// </summary>
         public int MaxBid { get; }
 
+        /// <summary>
+        /// Match-score target. A team wins once it reaches this AND leads the
+        /// runner-up by at least 2 (see the MatchEngine's end condition).
+        /// </summary>
+        public int TargetScore { get; }
+
         /// <summary>Cards left undealt after the initial deal.</summary>
         public int LeftoverCount => DeckSize - (CardsPerPlayer * PlayerCount);
 
@@ -59,7 +65,8 @@ namespace CruceChaos.Core.Game
             DealStrategy dealStrategy,
             int[] teamOfSeat,
             RuleSetFactory.Options ruleOptions,
-            int maxBid = 6)
+            int maxBid = 6,
+            int targetScore = 11)
         {
             PlayerCount = playerCount;
             CardsPerPlayer = cardsPerPlayer;
@@ -67,6 +74,7 @@ namespace CruceChaos.Core.Game
             TeamOfSeat = teamOfSeat;
             RuleOptions = ruleOptions;
             MaxBid = maxBid;
+            TargetScore = targetScore;
 
             Validate();
         }
@@ -92,6 +100,11 @@ namespace CruceChaos.Core.Game
             if (MaxBid < 1)
             {
                 throw new ArgumentException($"MaxBid must be at least 1, was {MaxBid}.");
+            }
+
+            if (TargetScore < 1)
+            {
+                throw new ArgumentException($"TargetScore must be at least 1, was {TargetScore}.");
             }
 
             if (TeamOfSeat == null || TeamOfSeat.Length != PlayerCount)

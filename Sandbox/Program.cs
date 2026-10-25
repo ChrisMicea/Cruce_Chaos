@@ -1,5 +1,7 @@
 using System;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using CruceChaos.Core.Game;
 using CruceChaos.Core.Players;
 using CruceChaos.Core.Players.AI;
@@ -32,19 +34,37 @@ namespace CruceChaos.Sandbox
 
             GameMode mode = ParseMode(args.Length > 1 ? args[1] : "1v1");
             bool mustRaise = Array.IndexOf(args, "raise") >= 0;
+            bool singleRound = Array.IndexOf(args, "round") >= 0;
 
             var options = new RuleSetFactory.Options { MustRaiseWhenFollowing = mustRaise };
             MatchConfig config = GameModes.DefaultConfig(mode, options);
 
-            // The rule set depends on whether the mode uses a draw pile: the
-            // draw-phase "anything goes" rule only belongs to draw-pile modes.
-            RuleSet ruleSet = config.DealStrategy == DealStrategy.DrawPilePerTrick
-                ? RuleSetFactory.TwoPlayerDrawPile(options)
-                : RuleSetFactory.NoDrawPile(options);
-
             (Player[] players, IPlayerController[] controllers) = BuildSeats(config.PlayerCount);
 
             Console.WriteLine($"=== Cruce Chaos — {mode} (seed {seed}, must-raise {(mustRaise ? "ON" : "off")}) ===\n");
+
+            if (singleRound)
+            {
+                RunSingleRound(players, controllers, config, options, seed);
+                return;
+            }
+
+            // Default: play a full match to the target score.
+            var match = new MatchEngine(players, controllers, config, seed: seed, log: Console.WriteLine);
+            MatchResult result = match.Play();
+
+            string winners = string.Join(" / ", result.Winners.Select(p => p.Name));
+            Console.WriteLine($"=== MATCH OVER — winner: {winners} (score {result.WinningScore}, target {config.TargetScore}) ===");
+        }
+
+        /// <summary>Detailed single-round inspection (per-trick log + per-player team view).</summary>
+        private static void RunSingleRound(
+            Player[] players, IPlayerController[] controllers, MatchConfig config,
+            RuleSetFactory.Options options, int seed)
+        {
+            RuleSet ruleSet = config.DealStrategy == DealStrategy.DrawPilePerTrick
+                ? RuleSetFactory.TwoPlayerDrawPile(options)
+                : RuleSetFactory.NoDrawPile(options);
 
             var engine = new RoundEngine(players, controllers, config, ruleSet, seed, Console.WriteLine);
             RoundResult result = engine.Play();
@@ -52,8 +72,7 @@ namespace CruceChaos.Sandbox
             Console.WriteLine("=== Round over ===");
             if (result.WinningBid.HasValue)
             {
-                string winner = players[result.BidWinnerSeat].Name;
-                Console.WriteLine($"  Contract: {winner} bid {result.WinningBid} (trump {result.Trump})");
+                Console.WriteLine($"  Contract: {players[result.BidWinnerSeat].Name} bid {result.WinningBid} (trump {result.Trump})");
             }
 
             int total = 0;
@@ -67,15 +86,6 @@ namespace CruceChaos.Sandbox
             if (total != 120)
             {
                 Console.WriteLine("  WARNING: points do not sum to 120 — something is wrong.");
-            }
-
-            // Per-player view the UI would use: own captured points vs the
-            // participant's team total, looked up via RoundResult.UnitOf.
-            Console.WriteLine("\n  Per-player (own / team):");
-            foreach (RoundParticipant p in engine.Participants)
-            {
-                ScoringUnit unit = result.UnitOf(p);
-                Console.WriteLine($"    {p.Player.Name}: own {p.CapturedPoints} / team {unit?.CapturedPoints} [{unit?.Label}]");
             }
         }
 
