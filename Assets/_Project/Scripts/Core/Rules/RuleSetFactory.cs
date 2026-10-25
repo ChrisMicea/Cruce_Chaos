@@ -36,9 +36,12 @@ namespace CruceChaos.Core.Rules
         public static RuleSet TwoPlayerDrawPile(Options options)
         {
             var set = new RuleSet()
+                // Opening-lead trump obligation comes FIRST — it must override
+                // the draw-phase "anything goes" short-circuit on that one lead.
+                .Append(new LeadTrumpOnOpeningRule())
                 .Append(new DrawPhaseAnythingGoesRule())  // short-circuits during the draw phase
                 .Append(new FollowSuitRule())             // then normal obligations:
-                .Append(new TrumpObligationRule());       // (trump stub for now)
+                .Append(new TrumpObligationRule());
 
             AppendOptional(set, options);
             return set;
@@ -52,6 +55,7 @@ namespace CruceChaos.Core.Rules
         public static RuleSet NoDrawPile(Options options)
         {
             var set = new RuleSet()
+                .Append(new LeadTrumpOnOpeningRule())
                 .Append(new FollowSuitRule())
                 .Append(new TrumpObligationRule());
 

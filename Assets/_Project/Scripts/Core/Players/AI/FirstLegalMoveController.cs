@@ -21,6 +21,12 @@ namespace CruceChaos.Core.Players.AI
         /// <summary>Always passes — the baseline makes no bidding decision.</summary>
         public Bid PlaceBid(RoundParticipant self, BiddingContext context) => Bid.Pass;
 
+        /// <summary>Declares the suit of its first card — no strategy.</summary>
+        public Suit DeclareTrump(RoundParticipant self) => self.Hand.Cards[0].Suit;
+
+        /// <summary>Takes the first available card — no strategy.</summary>
+        public Card ChooseDraftCard(RoundParticipant self, IReadOnlyList<Card> available, Suit trump) => available[0];
+
         public Card ChooseCard(RoundParticipant self, IReadOnlyList<Card> legalMoves, ITrickContext context)
         {
             // legalMoves is guaranteed non-empty by the engine's contract.

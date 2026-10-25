@@ -59,19 +59,14 @@ Decide in this order:
 
 ## B. When LEADING (I choose the suit)
 
-Leading depends on whether this is the round's opening lead (which sets trump)
-and whether the draw pile still has cards.
+Leading depends only on whether the draw pile still has cards. Trump is declared explicitly before
+play (section G), and the "bid winner must lead trump on the opening" obligation
+is enforced by the **legality pipeline** (`LeadTrumpOnOpeningRule`), which
+pre-filters `legalMoves` to trump on that one lead. So on the opening lead the
+rules below simply pick among the trump-only set the pipeline provides — no
+engine-side AI logic needed.
 
-0. **FORCED opening lead (round's first play, trump not yet set):**
-   deliberately set trump to the suit the hand holds the MOST cards of
-   (tie-break: most total points in the suit). Lead the **lowest-strength** card
-   of that suit, so trump is established cheaply without burning a high trump.
-   This is the lead that makes bidding coherent: the bid heuristic (section F)
-   evaluates the hand as if its longest suit were trump, and this rule *realizes*
-   that trump, so what the AI bids for is what it actually gets. Detected by
-   trump being unset — only ever true on the opening lead.
-
-1. **Draw-phase lead, after the opening (draw pile NOT empty):** play the
+1. **Draw-phase lead (draw pile NOT empty):** play the
    highest-**points** NON-trump card (tie-break highest strength).
    Rationale: while cards remain to draw there is no follow-suit obligation, so
    a high card led is relatively safe, and you refill your hand anyway — so
@@ -93,10 +88,10 @@ and whether the draw pile still has cards.
 > cards. Future modes without a draw pile simply never trigger B.1, which is
 > correct.
 
-> Opening-lead note: the opening lead is handled by B.0, which deliberately
-> picks the longest suit as trump rather than letting trump fall out of a
-> value pick. This replaced an earlier version where the opening lead just used
-> B.1 and trump was an accidental side effect.
+> Opening-lead note: the opening lead is NOT special-cased in the AI. Trump is
+> declared explicitly before play (section G), and the forced-trump opening is
+> enforced by the legality pipeline, which filters this lead to trumps. The AI
+> rules above then just pick among that filtered set.
 
 ## C. Trump handling (cross-cutting)
 
@@ -129,7 +124,8 @@ points. Overbidding is punished, so the engine is deliberately **conservative**:
 bid the floor of what the hand can likely make, lean toward passing.
 
 Strength is evaluated **as if the hand's longest suit were trump** — which is
-consistent with lead rule B.0, which actually makes that suit trump. So:
+consistent with the trump declaration (section G), which actually declares that
+same suit. So:
 
 1. **Pick the candidate trump:** the suit with the most cards (tie-break: most
    total points). Call its cards the *trumps*.
@@ -158,11 +154,33 @@ consistent with lead rule B.0, which actually makes that suit trump. So:
 - No announcements (40/20 marriages) factor into the bid.
 - No opponent modelling or memory — purely static hand evaluation.
 
+## G. Trump declaration & drafting
+
+After winning the bid, the AI makes two further decisions (both are explicit
+`IPlayerController` calls, happening before any card is played):
+
+1. **Declare trump** (`DeclareTrump`): the **longest suit** (tie-break most
+   total points) — the SAME suit the bid heuristic (F) scored on, so the bid and
+   the declared trump always agree. The forced-trump opening lead (enforced by
+   the pipeline) then means the AI opens with a trump it is long in.
+
+2. **Draft** (`ChooseDraftCard`, only in reveal-and-draft modes): take the
+   **highest trump** available; if none is revealed, take the **highest-points**
+   card (tie-break highest strength). Trump beats everything, so grabbing the
+   best trump is the greedy pick. Trump is already declared when drafting, so
+   this is trump-aware.
+
+   NOTE: the AI does NOT gamble — it will not overbid hoping the draft rescues a
+   weak hand. That risk/reward depth is left for a smarter engine; here the bid
+   is committed conservatively before the reveal and the draft is a plain greedy
+   grab.
+
 ## Summary (the whole engine in one breath)
 
-> Bid conservatively on longest-suit-as-trump hand strength, else pass.
-> Opening lead: force your longest suit as trump, led low. Other draw-phase
-> leads: bank the highest-value non-trump. Normal leads: cheapest non-trump.
-> Follow: win with the cheapest card that wins, else throw the lowest-point
-> card, keeping trump. Never waste high cards or trump on tricks that don't
-> need them.
+> Bid conservatively on longest-suit-as-trump hand strength, else pass. Declare
+> that longest suit as trump; draft the best trump (else highest value). Opening
+> lead is forced to trump by the rules (not AI logic). Other draw-phase leads:
+> bank the highest-value non-trump. Normal leads: cheapest non-trump. Follow:
+> win with the cheapest card that wins, else throw the lowest-point card, keeping
+> trump. Never waste high cards or trump on tricks that don't need them, and
+> never gamble.

@@ -45,6 +45,9 @@ namespace CruceChaos.Core.Game
         private int? _winningBid;
         private int _bidWinnerSeat = -1;
 
+        /// <summary>True until the first card of the round is played (for the opening-lead rule).</summary>
+        private bool _firstPlayOfRound = true;
+
         /// <summary>
         /// The round's trump suit. Null until established (currently by the
         /// first card played; see <see cref="EstablishTrumpIfUnset"/>).
@@ -120,6 +123,8 @@ namespace CruceChaos.Core.Game
         {
             Deal();
             RunBidding();
+            DeclareTrump();
+            RunDraftIfNeeded();
             PlayAllTricks();
             return new RoundResult(_scoringUnits, _winningBid, _bidWinnerSeat, _trump);
         }
@@ -141,37 +146,71 @@ namespace CruceChaos.Core.Game
                 _log($"{_participants[seat].Player.Name} receives: {_participants[seat].Hand}");
             }
 
-            ResolveLeftover();
+            // Leftover (if any) stays in the deck for now. DrawPilePerTrick draws
+            // from it per trick; RevealAndDraft distributes it after trump is
+            // declared (see RunDraftIfNeeded); DealAll leaves none; BlindSurprise
+            // is not yet implemented.
+            if (_config.DealStrategy == DealStrategy.BlindSurprise)
+            {
+                throw new NotImplementedException("BlindSurprise deal strategy is not yet implemented.");
+            }
+
+            _log(_config.DealStrategy == DealStrategy.DrawPilePerTrick
+                ? $"Draw pile: {_deck.Count} cards remaining.\n"
+                : $"Leftover in deck: {_deck.Count}.\n");
+        }
+
+        // --- trump declaration & draft -------------------------------------
+
+        /// <summary>
+        /// The bid winner declares the round's trump suit, after bidding and
+        /// before the reveal/draft. Replaces the old "first card led sets trump".
+        /// </summary>
+        private void DeclareTrump()
+        {
+            RoundParticipant winner = _participants[_bidWinnerSeat];
+            _trump = _controllers[_bidWinnerSeat].DeclareTrump(winner);
+            _log($"  {winner.Player.Name} declares trump: {_trump}\n");
         }
 
         /// <summary>
-        /// Handle the undealt cards according to the deal strategy. DealAll has
-        /// none; DrawPilePerTrick leaves them in the deck as the draw pile;
-        /// RevealAndDraft and BlindSurprise are not yet implemented (they depend
-        /// on bidding / later work).
+        /// RevealAndDraft only: reveal the leftover cards publicly, then the bid
+        /// winner picks one, then each other player picks one in clockwise order,
+        /// until the leftover is exhausted (leftover count == player count, so
+        /// each drafts exactly one). Trump is already declared, so controllers
+        /// may draft trump-aware.
         /// </summary>
-        private void ResolveLeftover()
+        private void RunDraftIfNeeded()
         {
-            switch (_config.DealStrategy)
+            if (_config.DealStrategy != DealStrategy.RevealAndDraft)
             {
-                case DealStrategy.DealAll:
-                    // Nothing left; deck is empty.
-                    _log($"All cards dealt; no draw pile.\n");
-                    break;
-
-                case DealStrategy.DrawPilePerTrick:
-                    _log($"Draw pile: {_deck.Count} cards remaining.\n");
-                    break;
-
-                case DealStrategy.RevealAndDraft:
-                    throw new NotImplementedException(
-                        "RevealAndDraft deal strategy requires bidding (the bid winner drafts first); " +
-                        "deferred to the 1v1v1 milestone.");
-
-                case DealStrategy.BlindSurprise:
-                    throw new NotImplementedException(
-                        "BlindSurprise deal strategy is not yet implemented.");
+                return;
             }
+
+            // Reveal everything remaining in the deck (public information).
+            var available = new List<Card>(_deck.Draw(_deck.Count));
+            _log($"--- Draft --- revealed: {string.Join(", ", available)}");
+
+            // Bid winner drafts first, then clockwise.
+            for (int i = 0; i < _playerCount && available.Count > 0; i++)
+            {
+                int seat = (_bidWinnerSeat + i) % _playerCount;
+                RoundParticipant p = _participants[seat];
+                Card picked = _controllers[seat].ChooseDraftCard(p, available, _trump.Value);
+
+                if (!available.Remove(picked))
+                {
+                    // Controller returned a card not on offer — defensively take
+                    // the first available instead of trusting the bad pick.
+                    picked = available[0];
+                    available.RemoveAt(0);
+                }
+
+                p.Hand.Add(picked);
+                _log($"  {p.Player.Name} drafts {picked}");
+            }
+
+            _log(string.Empty);
         }
 
         // --- bidding --------------------------------------------------------
@@ -290,21 +329,10 @@ namespace CruceChaos.Core.Game
             return false;
         }
 
-        private bool EstablishTrumpIfUnset(Card firstCard)
-        {
-            if (_trump.HasValue)
-            {
-                return false;
-            }
-
-            _trump = firstCard.Suit;
-            return true;
-        }
-
         private Trick PlayOneTrick()
         {
             Trick trick = new Trick();
-            trick.SetTrump(_trump);
+            trick.SetTrump(_trump);  // trump was declared before play; fixed all round
             // Draw-pile size is fixed for the duration of a trick.
             trick.SetDrawPileCount(_deck.Count);
 
@@ -314,22 +342,20 @@ namespace CruceChaos.Core.Game
                 RoundParticipant participant = _participants[seat];
                 IPlayerController controller = _controllers[seat];
 
-                var context = new LegalMoveContext(participant.Hand, trick, _trump, drawPileCount: _deck.Count);
+                // The opening lead is the bid winner's very first play of the
+                // round; the LeadTrumpOnOpeningRule uses this to force a trump.
+                bool isOpeningLead = _firstPlayOfRound && trick.IsEmpty;
+
+                var context = new LegalMoveContext(
+                    participant.Hand, trick, _trump, drawPileCount: _deck.Count, isOpeningLead: isOpeningLead);
                 IReadOnlyList<Card> legalMoves = _legalMoves.LegalMoves(context);
 
                 Card chosen = controller.ChooseCard(participant, legalMoves, trick);
                 participant.Hand.Remove(chosen);
                 trick.Add(participant, chosen);
+                _firstPlayOfRound = false;
 
-                bool trumpJustSet = EstablishTrumpIfUnset(chosen);
-                if (trumpJustSet)
-                {
-                    // Reflect newly-established trump to later players this trick.
-                    trick.SetTrump(_trump);
-                }
-
-                _log($"  {participant.Player.Name} plays {chosen}" +
-                     (trumpJustSet ? $"   (trump is now {chosen.Suit})" : string.Empty));
+                _log($"  {participant.Player.Name} plays {chosen}");
             }
 
             return trick;

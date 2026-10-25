@@ -84,6 +84,7 @@ namespace CruceChaos.Sandbox
             switch (s.ToLowerInvariant())
             {
                 case "2v2": return GameMode.TwoVsTwo;
+                case "2v2draft": return GameMode.TwoVsTwoDraft;
                 case "1v1v1": return GameMode.OneVsOneVsOne;
                 case "ffa4": return GameMode.FourPlayerIndividual;
                 case "1v1":

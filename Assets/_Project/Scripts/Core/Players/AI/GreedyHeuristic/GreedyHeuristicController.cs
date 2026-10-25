@@ -46,12 +46,7 @@ namespace CruceChaos.Core.Players.AI.GreedyHeuristic
             }
 
             // F.1: candidate trump = longest suit (tie-break most points).
-            Suit candidateTrump = hand
-                .GroupBy(c => c.Suit)
-                .OrderByDescending(g => g.Count())
-                .ThenByDescending(g => g.Sum(c => c.Points))
-                .First()
-                .Key;
+            Suit candidateTrump = LongestSuit(hand);
 
             int score = ScoreHand(hand, candidateTrump);
 
@@ -195,28 +190,12 @@ namespace CruceChaos.Core.Players.AI.GreedyHeuristic
 
         private static Card ChooseLead(IReadOnlyList<Card> legalMoves, Suit? trump, int drawPileCount)
         {
-            // B.0: FORCED opening lead. Trump is unset only on the round's very
-            // first play, so this reliably detects the opening lead. Deliberately
-            // set trump to our longest suit by leading it — lowest card of it, so
-            // we establish trump cheaply without burning a high trump. Tie-break
-            // longest suits by most total points (strongest long suit = best
-            // trump), matching the bid heuristic's own trump pick.
-            if (trump == null)
-            {
-                Suit chosen = legalMoves
-                    .GroupBy(c => c.Suit)
-                    .OrderByDescending(g => g.Count())
-                    .ThenByDescending(g => g.Sum(c => c.Points))
-                    .First()
-                    .Key;
-
-                return legalMoves
-                    .Where(c => c.Suit == chosen)
-                    .OrderBy(c => c.Strength)
-                    .ThenBy(c => c.Points)
-                    .First();
-            }
-
+            // Note: trump is now declared explicitly before play, so the opening
+            // lead needs no special handling here. The "opening lead must be
+            // trump" obligation is enforced by the legality pipeline
+            // (LeadTrumpOnOpeningRule), which pre-filters legalMoves to trump on
+            // that one lead — so the rules below simply pick among whatever is
+            // legal, with no opening-lead special case.
             List<Card> nonTrump = legalMoves.Where(c => !IsTrump(c, trump)).ToList();
 
             // B.4: hand is all trump — no non-trump to lead. Lead the
@@ -248,8 +227,40 @@ namespace CruceChaos.Core.Players.AI.GreedyHeuristic
                 .First();
         }
 
+        // --- Trump declaration & drafting ----------------------------------
+
+        /// <summary>
+        /// Declare the longest suit as trump (tie-break most points), matching
+        /// the suit the bid heuristic scored on, so the AI's bid and trump agree.
+        /// </summary>
+        public Suit DeclareTrump(RoundParticipant self) => LongestSuit(self.Hand.Cards);
+
+        /// <summary>
+        /// Draft the highest TRUMP available; if none, the highest-points card
+        /// (tie-break highest strength). Trump beats everything, so grabbing the
+        /// best trump is the greedy pick.
+        /// </summary>
+        public Card ChooseDraftCard(RoundParticipant self, IReadOnlyList<Card> available, Suit trump)
+        {
+            List<Card> trumps = available.Where(c => c.Suit == trump).ToList();
+            IReadOnlyList<Card> pool = trumps.Count > 0 ? trumps : available;
+
+            return pool
+                .OrderByDescending(c => c.Points)
+                .ThenByDescending(c => c.Strength)
+                .First();
+        }
+
         // --- helpers -------------------------------------------------------
 
         private static bool IsTrump(Card card, Suit? trump) => trump.HasValue && card.Suit == trump.Value;
+
+        /// <summary>The suit the hand holds the most of (tie-break most total points).</summary>
+        private static Suit LongestSuit(IReadOnlyList<Card> hand) => hand
+            .GroupBy(c => c.Suit)
+            .OrderByDescending(g => g.Count())
+            .ThenByDescending(g => g.Sum(c => c.Points))
+            .First()
+            .Key;
     }
 }

@@ -363,3 +363,61 @@ added, section F written, stale notes corrected) and the controller matches it.
 scoring under-bids in 2v2 where the TEAM must make 33×S), ignores announcements,
 and does no opponent modelling. The greedy doc's older "Measured performance"
 table predates bidding + B.0 and is now stale (left as a historical note).
+
+### Step 3 addendum + Step 4: explicit trump, reveal-and-draft, forced trump lead -- Christian
+
+**Step 3 (team view for UI).** Most of "team scoring" was already done by the
+step-1 scoring-unit seam (card points pool by team automatically). The only gap
+was a participant → team lookup for the UI. Added `RoundResult.UnitOf(participant)`
+— a linear scan over the (≤4) units' member lists returning the participant's
+scoring unit, whose `CapturedPoints` is the team total to display. Deliberately
+NOT a back-reference on `RoundParticipant` (option b): participant and unit stay
+decoupled; whoever holds all the units does the lookup. There was no prior
+participant → unit method (`ScoringUnit.Members` is the reverse direction).
+
+**Step 4 reshaped the trump mechanic across the whole engine.** Adding the draft
+forced trump to be decided BEFORE play (the draft's risk/reward is "commit to
+trump, then gamble on the reveal"), so "first card led sets trump" was replaced
+everywhere by an explicit declaration.
+
+New round flow (all modes): **Deal → Bid → DeclareTrump → Draft → Play.**
+
+- **`IPlayerController` gained two decisions:** `DeclareTrump(self)` (bid winner
+  only, after bidding, before the reveal) and `ChooseDraftCard(self, available,
+  trump)`. Human vs AI stay interchangeable.
+- **Engine:** `DeclareTrump()` asks the bid winner's controller for the suit and
+  sets `_trump`; `EstablishTrumpIfUnset` and the mid-trick "first card sets
+  trump" logic were deleted. `RunDraftIfNeeded()` handles `RevealAndDraft`:
+  reveal the leftover publicly (logged), then bid-winner-first clockwise, each
+  player drafts one card into hand.
+- **New hard rule (rule 'a'): the bid winner must lead TRUMP on the opening.**
+  Implemented as a legality rule `LeadTrumpOnOpeningRule` driven by a new
+  `LegalMoveContext.IsOpeningLead` flag (true only for the round's first play).
+  Ordered BEFORE `DrawPhaseAnythingGoesRule` so it overrides the draw-phase
+  "anything goes" short-circuit on that one lead. Because it lives in the
+  pipeline, it constrains humans and AI identically — the greedy AI needed NO
+  opening-lead logic; it just picks among the trump-only set the pipeline hands
+  it. This is what let us delete the greedy B.0 "forced opening lead" hack.
+
+**Greedy AI updates.** `DeclareTrump` = longest suit (same computation the bid
+heuristic scores on, extracted into a shared `LongestSuit` helper, so bid and
+trump always agree). `ChooseDraftCard` = highest trump available, else
+highest-points card (trump beats everything). B.0 removed; the opening lead now
+falls through to the normal lead rules, which operate on the pipeline's
+trump-filtered set.
+
+**New mode.** `GameMode.TwoVsTwoDraft` — 2v2 "5 + 1": 5 dealt each, 4 revealed
+and drafted one apiece (`RevealAndDraft`). Kept as its own enum entry (the set of
+modes is small and controlled). The plain `TwoVsTwo` (6 each, `DealAll`) stays.
+
+**Verification.** All five modes (1v1, 2v2, 2v2draft, 1v1v1, ffa4) play full
+rounds; the 120-point checksum held with zero failures over 40 seeds each (200
+runs). Confirmed per round: trump declared before the draft, draft order is
+bid-winner-then-clockwise with one card each, and the opening lead is ALWAYS
+trump (checked across seeds). Note: an initial "forced-trump" failure was a bug
+in the verification SCRIPT (parsed the wrong log line), not the engine — the rule
+was correct; re-verified with a corrected parse.
+
+**Deferred still:** score conversion + announcements (the bids recorded on
+`RoundResult` remain unscored); the multi-round match loop with rotating
+opening lead; AI draft-gambling / overbidding (greedy stays conservative).

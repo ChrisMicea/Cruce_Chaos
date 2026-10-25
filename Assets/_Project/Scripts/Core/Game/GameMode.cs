@@ -13,8 +13,11 @@ namespace CruceChaos.Core.Game
         /// <summary>2 players, individual, "cu carti de jos" draw pile.</summary>
         OneVsOne,
 
-        /// <summary>4 players in two teams of opposite seats (2v2).</summary>
+        /// <summary>4 players in two teams of opposite seats (2v2), all 6 dealt.</summary>
         TwoVsTwo,
+
+        /// <summary>2v2 "5 + 1 draft": 5 dealt each, 4 revealed and drafted one apiece.</summary>
+        TwoVsTwoDraft,
 
         /// <summary>3 players, individual.</summary>
         OneVsOneVsOne,
@@ -53,6 +56,14 @@ namespace CruceChaos.Core.Game
                         cardsPerPlayer: 6,
                         dealStrategy: DealStrategy.DealAll,
                         // Opposite seats share a team: seats 0,2 vs 1,3.
+                        teamOfSeat: new[] { 0, 1, 0, 1 },
+                        ruleOptions: ruleOptions);
+
+                case GameMode.TwoVsTwoDraft:
+                    return new MatchConfig(
+                        playerCount: 4,
+                        cardsPerPlayer: 5,     // 4×5 = 20 dealt, 4 revealed & drafted
+                        dealStrategy: DealStrategy.RevealAndDraft,
                         teamOfSeat: new[] { 0, 1, 0, 1 },
                         ruleOptions: ruleOptions);
 
