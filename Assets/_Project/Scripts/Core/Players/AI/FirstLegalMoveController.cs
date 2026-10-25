@@ -18,6 +18,9 @@ namespace CruceChaos.Core.Players.AI
     /// </summary>
     public sealed class FirstLegalMoveController : IPlayerController
     {
+        /// <summary>Always passes — the baseline makes no bidding decision.</summary>
+        public Bid PlaceBid(RoundParticipant self, BiddingContext context) => Bid.Pass;
+
         public Card ChooseCard(RoundParticipant self, IReadOnlyList<Card> legalMoves, ITrickContext context)
         {
             // legalMoves is guaranteed non-empty by the engine's contract.

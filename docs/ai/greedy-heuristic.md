@@ -59,21 +59,23 @@ Decide in this order:
 
 ## B. When LEADING (I choose the suit)
 
-Leading depends on whether the draw pile still has cards (the "cu carti de jos"
-phase, where there is no follow-suit obligation).
+Leading depends on whether this is the round's opening lead (which sets trump)
+and whether the draw pile still has cards.
 
-1. **Draw-phase lead (draw pile NOT empty):** play the highest-**points**
-   NON-trump card (tie-break highest strength).
+0. **FORCED opening lead (round's first play, trump not yet set):**
+   deliberately set trump to the suit the hand holds the MOST cards of
+   (tie-break: most total points in the suit). Lead the **lowest-strength** card
+   of that suit, so trump is established cheaply without burning a high trump.
+   This is the lead that makes bidding coherent: the bid heuristic (section F)
+   evaluates the hand as if its longest suit were trump, and this rule *realizes*
+   that trump, so what the AI bids for is what it actually gets. Detected by
+   trump being unset — only ever true on the opening lead.
+
+1. **Draw-phase lead, after the opening (draw pile NOT empty):** play the
+   highest-**points** NON-trump card (tie-break highest strength).
    Rationale: while cards remain to draw there is no follow-suit obligation, so
    a high card led is relatively safe, and you refill your hand anyway — so
    hoarding value is pointless. Bank points early instead.
-
-   This rule also governs the **very first lead of the round**, which is the
-   card that establishes trump. Trump therefore falls out as a *side effect*:
-   it becomes the suit of whatever highest-value non-trump card gets led. The
-   AI does NOT deliberately choose trump by suit length — a single draw-phase
-   lead rule was chosen for simplicity (the exact trump suit barely moves the
-   game at large).
 
 2. **Normal lead (draw pile empty):** play the lowest-**points** NON-trump card
    (tie-break lowest strength). Once follow-suit is in force, a cheap probe is
@@ -91,9 +93,10 @@ phase, where there is no follow-suit obligation).
 > cards. Future modes without a draw pile simply never trigger B.1, which is
 > correct.
 
-> Known crude spot: on the opening lead, "lead highest-value non-trump" is
-> slightly incoherent because the suit you lead becomes trump — you cannot avoid
-> making trump out of the card you lead. Accepted as-is for this tier.
+> Opening-lead note: the opening lead is handled by B.0, which deliberately
+> picks the longest suit as trump rather than letting trump fall out of a
+> value pick. This replaced an earlier version where the opening lead just used
+> B.1 and trump was an accidental side effect.
 
 ## C. Trump handling (cross-cutting)
 
@@ -119,9 +122,47 @@ phase, where there is no follow-suit obligation).
   then lowest-points** one deterministically (no randomness), so games are
   reproducible for a given seed.
 
+## F. Bidding
+
+The bid estimates hand strength and commits to capturing ~33×S of the 120 card
+points. Overbidding is punished, so the engine is deliberately **conservative**:
+bid the floor of what the hand can likely make, lean toward passing.
+
+Strength is evaluated **as if the hand's longest suit were trump** — which is
+consistent with lead rule B.0, which actually makes that suit trump. So:
+
+1. **Pick the candidate trump:** the suit with the most cards (tie-break: most
+   total points). Call its cards the *trumps*.
+
+2. **Score the hand** (a rough expected-capture estimate, in points):
+   - Count trump length. Each trump beyond the first is worth a flat
+     `TrumpLengthValue` (long trump = control).
+   - Add the **points of high cards you are likely to keep**: trump Aces/Tens
+     count fully; non-trump Aces/Tens count partially (they can be trumped), and
+     only if backed by at least one other card of their suit (a *guarded*
+     honor). Bare non-trump honors count little.
+   - This is intentionally crude — a static hand score, no opponent modelling.
+
+3. **Map score → bid:** bid the highest S whose `33 × S` the score clears by a
+   safety margin `M`; if even S=1 is not cleared, **pass**. Numeric constants
+   (`TrumpLengthValue`, the honor weights, `M`) live in the controller and are
+   tuned empirically.
+
+4. **Respect the context:** never bid below `MinLegalBid` or above `MaxBid`; if
+   the next legal bid exceeds what the score justifies, pass.
+
+### Known limitations (accepted for this tier)
+
+- **Teams:** in 2v2 the TEAM must make 33×S, so own-hand-only scoring will
+  *under-bid* with a strong partner. Not corrected yet.
+- No announcements (40/20 marriages) factor into the bid.
+- No opponent modelling or memory — purely static hand evaluation.
+
 ## Summary (the whole engine in one breath)
 
-> Follow: win with the cheapest card that wins, 
-> else throw the lowest-point card, preferring to
-> keep trump. Lead: the cheapest non-trump card. Never waste high cards or trump
-> on tricks that don't need them.
+> Bid conservatively on longest-suit-as-trump hand strength, else pass.
+> Opening lead: force your longest suit as trump, led low. Other draw-phase
+> leads: bank the highest-value non-trump. Normal leads: cheapest non-trump.
+> Follow: win with the cheapest card that wins, else throw the lowest-point
+> card, keeping trump. Never waste high cards or trump on tricks that don't
+> need them.

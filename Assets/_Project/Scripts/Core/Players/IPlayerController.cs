@@ -14,6 +14,15 @@ namespace CruceChaos.Core.Players
     public interface IPlayerController
     {
         /// <summary>
+        /// Decide this player's bid during the bidding phase. Return
+        /// <see cref="Bid.Pass"/> to pass, or <see cref="Bid.Of"/> for a numeric
+        /// contract. A numeric bid MUST be in
+        /// [<see cref="BiddingContext.MinLegalBid"/>, <see cref="BiddingContext.MaxBid"/>];
+        /// the engine re-validates and treats an out-of-range bid as a pass.
+        /// </summary>
+        Bid PlaceBid(RoundParticipant self, BiddingContext context);
+
+        /// <summary>
         /// Choose which card to play from <paramref name="legalMoves"/>.
         ///
         /// <paramref name="legalMoves"/> is guaranteed non-empty, and the

@@ -245,3 +245,121 @@ every round (seat 0) makes it dominant (40/10). This surfaces a fairness
 requirement for later multi-round matches: **rotate the opening lead between
 rounds**, mirroring the real game's rotating dealer. Not addressed yet (there is
 no multi-round match loop).
+
+### Multiplayer (step 1): N-player engine + match config + teams seam -- Christian
+
+Generalized the engine off "exactly 2 players" to N players (2–4), driven by a
+match-level config, and laid the seam for team scoring. No bidding yet.
+
+**`MatchConfig`** (`Core/Game/MatchConfig.cs`) — the settings chosen once per
+match and held for every round: `PlayerCount`, `CardsPerPlayer`, `DealStrategy`,
+`TeamOfSeat` (team index per seat), and the rule `Options`. It validates its own
+invariants at construction (`cards × players + leftover == 24`, and each deal
+strategy's leftover-count constraint), so an impossible combination fails at
+setup, never mid-deal. Named "Match", not "Round", because these are match-wide.
+
+**`DealStrategy`** (`Core/Game/DealStrategy.cs`) — an axis INDEPENDENT of the
+game mode (e.g. 2v2 can be DealAll or the "5+1" draft):
+
+- `DealAll` — deal everything, no leftover. *(implemented)*
+- `DrawPilePerTrick` — partial deal, leftover drawn one-per-trick, follow-suit
+  suspended while the pile has cards ("cu carti de jos"). *(implemented; the
+  former 1v1 behaviour)*
+- `RevealAndDraft` — partial deal, leftover revealed, bid winner drafts first
+  then clockwise. *(stubbed — needs bidding; throws a clear NotImplemented)*
+- `BlindSurprise` — partial deal, random face-down leftover(s), no choice.
+  *(stubbed — later)*
+
+**`GameMode` presets** (`Core/Game/GameMode.cs`) — `OneVsOne` (2p, 8 each,
+DrawPilePerTrick), `TwoVsTwo` (4p, 6 each, DealAll, seats 0,2 vs 1,3),
+`OneVsOneVsOne` (3p, 7 each, RevealAndDraft), `FourPlayerIndividual` (4p, 6 each,
+DealAll). Each maps to a default `MatchConfig`; an advanced menu can override
+fields later. 1v1v1v1 was included because it is nearly free once N-player
+exists.
+
+**Team scoring seam — `ScoringUnit`** (`Core/Game/ScoringUnit.cs`). This was the
+design decision of the session (see the Player/ScoringUnit discussion): rather
+than a second point accumulator, a `ScoringUnit` is a VIEW over its member
+participants — `CapturedPoints` is the computed SUM of its members, so there is
+one source of truth (the participant). The parallel is
+`Player : RoundParticipant :: Team : ScoringUnit`. The engine always awards a
+won trick's points to the winning PARTICIPANT; a team total is just the sum.
+This is why 2v2 point-pooling worked with ZERO changes to the trick loop — the
+indirection was the whole point. (Option B of two clean options; Option A would
+have moved the tally onto the unit and dropped it from the participant.)
+
+**`RoundEngine` generalized.** Constructor now takes a `MatchConfig`; seating is
+`(_leaderIndex + i) % PlayerCount`; deal sizes come from config; the trick
+collects `PlayerCount` cards; `DrawFromPile` only runs for `DrawPilePerTrick`.
+`Play()` now returns `ScoringUnit[]` (per-team tallies), which also serves
+individual play (one unit per player). Trump is still "first card played"
+(bidding is step 2).
+
+**Verification.** Sandbox gained a mode arg (`1v1 | 2v2 | 1v1v1 | ffa4`). Over
+40 seeds each, the 120-point checksum held with ZERO failures for 1v1, 2v2, and
+ffa4. 2v2 correctly pools by team (e.g. `Alice / Cara` vs `Bob / Dan`). 1v1v1
+defers cleanly with an informative NotImplementedException (RevealAndDraft needs
+bidding), as designed.
+
+**Deferred:** bidding (step 2) → unblocks RevealAndDraft for real 1v1v1 (step 4)
+and the 2v2 "5+1" override; team *score conversion* (step 5) will consume these
+ScoringUnit totals.
+
+### Bidding (step 2) + greedy bid/lead heuristics -- Christian
+
+**Bidding phase.** Inserted between deal and play: Deal → Bid → winner leads →
+PlayAllTricks. New pieces in `Core/Game/`:
+
+- `Bid` — PASS or a numeric value. The value is NOT capped at 6 in the type; the
+  ceiling is `MatchConfig.MaxBid` (default 6, raisable by future power-ups).
+- `BiddingContext` — current high bid + max, given to the controller.
+- `RoundResult` — now returned by `RoundEngine.Play()`; carries the per-team
+  `ScoringUnit[]` plus the recorded winning bid, bid-winner seat, and trump.
+  The bid is RECORDED but NOT yet scored — score conversion (contract made /
+  failed) is deferred to its own milestone, and this result object means that
+  milestone needs no re-plumbing.
+- `IPlayerController.PlaceBid(self, context)` — the bidding decision seam,
+  alongside `ChooseCard`. Human vs AI stay interchangeable.
+
+**Engine bidding loop.** Seats bid in order from seat 0; a pass drops a seat out;
+a numeric bid must exceed the current high and not exceed `MaxBid` (out-of-range
+is treated as a pass). Highest remaining bidder wins and becomes the opening
+leader. **Forced-1:** if everyone passes, the LAST player to pass is forced to a
+contract of 1 (per the chosen rule — not an arbitrary seat). Trump is still set
+by the opening lead, which is now specifically the bid winner's lead. Verified a
+contested case (2 → 4, others pass, highest wins and leads) with a throwaway test
+bidder, since both shipping controllers currently bid conservatively.
+
+**Greedy bid heuristic (`GreedyHeuristicController`, doc section F).** Estimates
+hand strength AS IF the longest suit were trump (which lead rule B.0 then
+realizes, so bid and lead agree), and bids the highest S whose 33×S it clears by
+a safety margin, else passes. Deliberately conservative (overbidding is
+punished). Score = trump-length value + defensible honors (trump honors full,
+guarded non-trump honors partial). Tunable constants, empirically set:
+`TrumpLengthValue=14`, `GuardedHonorPercent=75`, `SafetyMargin=3`.
+
+**Greedy lead — forced opening lead (doc rule B.0).** The opening lead (detected
+by trump being unset) now FORCES the longest suit as trump: pick the suit with
+the most cards (tie-break most points), lead its lowest card — establishing the
+intended trump cheaply without burning a high trump. Subsequent draw-phase leads
+(B.1) and normal leads (B.2) are unchanged. This replaced the earlier behaviour
+where the opening lead used B.1 and trump was an accidental side effect; it makes
+the bid's assumed trump and the actual trump consistent by construction.
+
+**Empirical calibration (8-card 1v1 hands, 60 seeds, scores instrumented then
+the probe removed).** Score range 28–85, mean ~53. With the shipped constants:
+~93% of hands bid ≥1, ~18% reach a bid of 2, 0% reach 3. The `SafetyMargin`
+lever was measured (margin 6 → 8% bid-2; 3 → 18%; 0 → 20%) and set to 3 for
+"conservative but not timid". NOTE: this is calibrated against intuition, not
+outcomes — there is no match-score signal yet to tell whether a bid of S
+actually paid off. Real tuning waits for score conversion (step 5).
+
+**Verification.** 120-point checksum holds with zero failures across 1v1, 2v2,
+ffa4 over 40 seeds each. Forced opening lead and forced-1 both confirmed in the
+play logs. The greedy doc (`docs/ai/greedy-heuristic.md`) was updated first (B.0
+added, section F written, stale notes corrected) and the controller matches it.
+
+**Known limitations (carried forward):** the bid ignores teams (own-hand-only
+scoring under-bids in 2v2 where the TEAM must make 33×S), ignores announcements,
+and does no opponent modelling. The greedy doc's older "Measured performance"
+table predates bidding + B.0 and is now stale (left as a historical note).

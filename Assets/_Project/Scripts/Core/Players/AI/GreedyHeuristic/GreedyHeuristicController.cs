@@ -20,6 +20,99 @@ namespace CruceChaos.Core.Players.AI.GreedyHeuristic
     /// </summary>
     public sealed class GreedyHeuristicController : IPlayerController
     {
+        // --- Section F: bidding constants (tunable) ------------------------
+
+        /// <summary>Flat value of each trump beyond the first (long trump = control).</summary>
+        private const int TrumpLengthValue = 14;
+
+        /// <summary>Fraction (percent) of a guarded non-trump honor's points that count.</summary>
+        private const int GuardedHonorPercent = 75;
+
+        /// <summary>Safety margin (points) required above 33×S before bidding S.</summary>
+        private const int SafetyMargin = 3;
+
+        /// <summary>
+        /// Section F: estimate hand strength as if the longest suit were trump
+        /// (which lead rule B.0 then realizes), and bid the highest contract the
+        /// estimate clears by <see cref="SafetyMargin"/>; otherwise pass. See
+        /// docs/ai/greedy-heuristic.md for the rationale.
+        /// </summary>
+        public Bid PlaceBid(RoundParticipant self, BiddingContext context)
+        {
+            IReadOnlyList<Card> hand = self.Hand.Cards;
+            if (hand.Count == 0)
+            {
+                return Bid.Pass;
+            }
+
+            // F.1: candidate trump = longest suit (tie-break most points).
+            Suit candidateTrump = hand
+                .GroupBy(c => c.Suit)
+                .OrderByDescending(g => g.Count())
+                .ThenByDescending(g => g.Sum(c => c.Points))
+                .First()
+                .Key;
+
+            int score = ScoreHand(hand, candidateTrump);
+
+            // F.3: highest S whose 33*S is cleared by the safety margin.
+            int bestS = 0;
+            for (int s = 1; s <= context.MaxBid; s++)
+            {
+                if (score >= (33 * s) + SafetyMargin)
+                {
+                    bestS = s;
+                }
+            }
+
+            // F.4: respect the current high bid; pass if we can't justify a
+            // legal raise.
+            if (bestS < context.MinLegalBid)
+            {
+                return Bid.Pass;
+            }
+
+            return Bid.Of(bestS);
+        }
+
+        /// <summary>F.2: a crude static expected-capture estimate, in points.</summary>
+        private static int ScoreHand(IReadOnlyList<Card> hand, Suit trump)
+        {
+            int score = 0;
+
+            int trumpCount = hand.Count(c => c.Suit == trump);
+            if (trumpCount > 1)
+            {
+                score += (trumpCount - 1) * TrumpLengthValue;
+            }
+
+            foreach (Card c in hand)
+            {
+                bool isHonor = c.Rank == Rank.Ace || c.Rank == Rank.Ten;
+                if (!isHonor)
+                {
+                    continue;
+                }
+
+                if (c.Suit == trump)
+                {
+                    score += c.Points; // trump honor: counts fully
+                }
+                else
+                {
+                    // Non-trump honor counts partially, and only if guarded
+                    // (at least one other card of its suit to back it).
+                    bool guarded = hand.Count(o => o.Suit == c.Suit) >= 2;
+                    if (guarded)
+                    {
+                        score += (c.Points * GuardedHonorPercent) / 100;
+                    }
+                }
+            }
+
+            return score;
+        }
+
         public Card ChooseCard(RoundParticipant self, IReadOnlyList<Card> legalMoves, ITrickContext context)
         {
             // Leading: no card has been led, so we pick the suit (section B).
@@ -102,6 +195,28 @@ namespace CruceChaos.Core.Players.AI.GreedyHeuristic
 
         private static Card ChooseLead(IReadOnlyList<Card> legalMoves, Suit? trump, int drawPileCount)
         {
+            // B.0: FORCED opening lead. Trump is unset only on the round's very
+            // first play, so this reliably detects the opening lead. Deliberately
+            // set trump to our longest suit by leading it — lowest card of it, so
+            // we establish trump cheaply without burning a high trump. Tie-break
+            // longest suits by most total points (strongest long suit = best
+            // trump), matching the bid heuristic's own trump pick.
+            if (trump == null)
+            {
+                Suit chosen = legalMoves
+                    .GroupBy(c => c.Suit)
+                    .OrderByDescending(g => g.Count())
+                    .ThenByDescending(g => g.Sum(c => c.Points))
+                    .First()
+                    .Key;
+
+                return legalMoves
+                    .Where(c => c.Suit == chosen)
+                    .OrderBy(c => c.Strength)
+                    .ThenBy(c => c.Points)
+                    .First();
+            }
+
             List<Card> nonTrump = legalMoves.Where(c => !IsTrump(c, trump)).ToList();
 
             // B.4: hand is all trump — no non-trump to lead. Lead the
@@ -114,10 +229,9 @@ namespace CruceChaos.Core.Players.AI.GreedyHeuristic
                     .First();
             }
 
-            // B.1: draw phase (pile not empty, no follow-suit obligation) — bank
-            // value early by leading the highest-points non-trump card (tie-break
-            // highest strength). Also governs the opening lead, which sets trump
-            // as a side effect. See the doc for the accepted "crude spot".
+            // B.1: draw-phase lead AFTER the opening (pile not empty, no
+            // follow-suit obligation) — bank value early by leading the
+            // highest-points non-trump card (tie-break highest strength).
             if (drawPileCount > 0)
             {
                 return nonTrump
