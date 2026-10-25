@@ -68,6 +68,15 @@ namespace CruceChaos.Sandbox
             {
                 Console.WriteLine("  WARNING: points do not sum to 120 — something is wrong.");
             }
+
+            // Per-player view the UI would use: own captured points vs the
+            // participant's team total, looked up via RoundResult.UnitOf.
+            Console.WriteLine("\n  Per-player (own / team):");
+            foreach (RoundParticipant p in engine.Participants)
+            {
+                ScoringUnit unit = result.UnitOf(p);
+                Console.WriteLine($"    {p.Player.Name}: own {p.CapturedPoints} / team {unit?.CapturedPoints} [{unit?.Label}]");
+            }
         }
 
         private static GameMode ParseMode(string s)

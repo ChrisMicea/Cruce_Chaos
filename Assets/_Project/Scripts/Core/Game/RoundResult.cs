@@ -1,3 +1,4 @@
+using System.Linq;
 using CruceChaos.Core.Cards;
 
 namespace CruceChaos.Core.Game
@@ -35,6 +36,31 @@ namespace CruceChaos.Core.Game
             WinningBid = winningBid;
             BidWinnerSeat = bidWinnerSeat;
             Trump = trump;
+        }
+
+        /// <summary>
+        /// Finds the scoring unit a participant belongs to — the UI's
+        /// participant → team lookup. In individual modes this is the unit that
+        /// wraps just that participant; in 2v2 it is the shared team unit, whose
+        /// <see cref="ScoringUnit.CapturedPoints"/> is the team total to display.
+        /// Returns null if the participant is not part of this result.
+        ///
+        /// Kept here (not as a back-reference on RoundParticipant) so the
+        /// participant and unit stay decoupled: whoever holds all the units does
+        /// the lookup. It is a linear scan over at most 4 units, which is
+        /// trivial for a per-round UI query.
+        /// </summary>
+        public ScoringUnit UnitOf(RoundParticipant participant)
+        {
+            foreach (ScoringUnit unit in ScoringUnits)
+            {
+                if (unit.Members.Contains(participant))
+                {
+                    return unit;
+                }
+            }
+
+            return null;
         }
     }
 }
