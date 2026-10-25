@@ -4,13 +4,10 @@ using CruceChaos.Core.Cards;
 namespace CruceChaos.Core.Game
 {
     /// <summary>
-    /// The outcome of one completed round: the per-team captured-point tallies,
-    /// plus the bidding/trump facts needed later for score conversion.
-    ///
-    /// The bid fields are RECORDED now but not yet consumed — score conversion
-    /// (contract made/failed, 33×S thresholds) is a later milestone. Carrying
-    /// them on the result means that milestone needs no re-plumbing: the data it
-    /// requires is already here.
+    /// The outcome of one completed round: the per-team scoring units (captured
+    /// card points + marriage bonuses), plus the bidding/trump facts the scorer
+    /// needs. Consumed by <see cref="Scoring.IRoundScorer"/> to produce the
+    /// per-team match-score deltas.
     /// </summary>
     public sealed class RoundResult
     {

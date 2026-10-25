@@ -137,7 +137,7 @@ namespace CruceChaos.Unity
             _aiParticipant    = new RoundParticipant(_aiPlayer);
 
             // Build rule set.
-            var ruleSet = RuleSetFactory.TwoPlayerDrawPile(new RuleSetFactory.Options
+            var ruleSet = RuleSetFactory.DrawPileRuleSet(new RuleSetFactory.Options
             {
                 MustRaiseWhenFollowing = _mustRaiseWhenFollowing
             });

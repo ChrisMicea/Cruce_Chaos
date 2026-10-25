@@ -24,6 +24,9 @@ namespace CruceChaos.Core.Players.AI
         /// <summary>Declares the suit of its first card — no strategy.</summary>
         public Suit DeclareTrump(RoundParticipant self) => self.Hand.Cards[0].Suit;
 
+        /// <summary>Never announces — the baseline forfeits marriage bonuses.</summary>
+        public Suit? AnnounceMarriage(RoundParticipant self, IReadOnlyList<Suit> available, Suit? trump) => null;
+
         /// <summary>Takes the first available card — no strategy.</summary>
         public Card ChooseDraftCard(RoundParticipant self, IReadOnlyList<Card> available, Suit trump) => available[0];
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using CruceChaos.Core.Cards;
 using CruceChaos.Core.Players;
 using CruceChaos.Core.Rules;
@@ -16,14 +17,16 @@ namespace CruceChaos.Core.Game
     ///      takes the card points and leads next; for DrawPilePerTrick, every
     ///      player then draws one (winner first) until the pile is empty.
     ///   3. Continue until all hands are empty.
-    ///   4. Return the per-team <see cref="ScoringUnit"/> tallies.
+    ///   4. Return a <see cref="RoundResult"/> (per-team tallies + bid + trump).
     ///
     /// Captured points are always awarded to the winning PARTICIPANT; a team's
     /// total is the computed sum over its members (see <see cref="ScoringUnit"/>),
     /// so individual and team play share one trick loop.
     ///
-    /// Simplified still: trump is the suit of the first card played (bidding not
-    /// yet implemented), and there is no score conversion.
+    /// Full flow: deal → bidding → the bid winner declares trump → (draft modes)
+    /// reveal-and-draft → play all tricks. Returns a <see cref="RoundResult"/>.
+    /// Converting a round's points into match score is the caller's job (see
+    /// <c>MatchEngine</c> / <c>IRoundScorer</c>).
     /// </summary>
     public sealed class RoundEngine
     {
@@ -224,14 +227,13 @@ namespace CruceChaos.Core.Game
         // --- bidding --------------------------------------------------------
 
         /// <summary>
-        /// Run the bidding phase. Seats bid in order starting at seat 0; a pass
-        /// drops a seat out; a numeric bid must exceed the current high bid and
-        /// not exceed the configured maximum (an out-of-range bid is treated as
-        /// a pass). Bidding ends when at most one seat is still in. If every
-        /// seat passes, the FORCED-1 rule applies: the last player to pass is
-        /// forced to a contract of 1. The winner becomes the opening leader.
-        /// Bidding begins at <see cref="_startingBidderSeat"/> (rotated per round
-        /// by the match loop).
+        /// Run the bidding phase. Seats bid in order starting at
+        /// <see cref="_startingBidderSeat"/> (rotated per round by the match
+        /// loop); a pass drops a seat out; a numeric bid must exceed the current
+        /// high bid and not exceed the configured maximum (an out-of-range bid is
+        /// treated as a pass). Bidding ends when at most one seat is still in. If
+        /// every seat passes, the FORCED-1 rule applies: the last player to pass
+        /// is forced to a contract of 1. The winner becomes the opening leader.
         /// </summary>
         private void RunBidding()
         {
@@ -295,8 +297,6 @@ namespace CruceChaos.Core.Game
             if (highSeat < 0)
             {
                 // Everyone passed — the LAST player who passed is forced to 1.
-                // Bidding runs seat 0..N-1 in order, so the last to pass is the
-                // final seat in that cycle.
                 highSeat = lastPasserSeat;
                 highBid = 1;
                 _log($"  All passed — {_participants[highSeat].Player.Name} (last to pass) is forced to 1");
@@ -356,8 +356,18 @@ namespace CruceChaos.Core.Game
                 // round; the LeadTrumpOnOpeningRule uses this to force a trump.
                 bool isOpeningLead = _firstPlayOfRound && trick.IsEmpty;
 
+                // Marriage announcement: only when leading. The engine decides,
+                // awards the bonus, and stamps the suit on the context so the
+                // AnnouncedMarriageLeadRule restricts the lead to its 3/4.
+                Suit? announcedSuit = null;
+                if (trick.IsEmpty)
+                {
+                    announcedSuit = ResolveAnnouncement(participant, controller, isOpeningLead);
+                }
+
                 var context = new LegalMoveContext(
-                    participant.Hand, trick, _trump, drawPileCount: _deck.Count, isOpeningLead: isOpeningLead);
+                    participant.Hand, trick, _trump, drawPileCount: _deck.Count,
+                    isOpeningLead: isOpeningLead, announcedSuit: announcedSuit);
                 IReadOnlyList<Card> legalMoves = _legalMoves.LegalMoves(context);
 
                 Card chosen = controller.ChooseCard(participant, legalMoves, trick);
@@ -369,6 +379,44 @@ namespace CruceChaos.Core.Game
             }
 
             return trick;
+        }
+
+        /// <summary>
+        /// Ask the leading controller whether to announce a marriage, award the
+        /// bonus if it does, and return the announced suit (or null).
+        ///
+        /// On the OPENING lead the lead must be trump, so only a trump marriage
+        /// can be announced there; other leads allow any held marriage. The
+        /// bonus is 40 for a trump marriage, 20 otherwise, added to the
+        /// participant's marriage tally (which feeds the team's point total).
+        /// </summary>
+        private Suit? ResolveAnnouncement(RoundParticipant participant, IPlayerController controller, bool isOpeningLead)
+        {
+            List<Suit> available = participant.Hand.MarriageSuits().ToList();
+
+            // On the opening lead only a trump marriage is compatible with the
+            // forced-trump-lead rule.
+            if (isOpeningLead)
+            {
+                available = available.Where(s => _trump.HasValue && s == _trump.Value).ToList();
+            }
+
+            if (available.Count == 0)
+            {
+                return null;
+            }
+
+            Suit? announced = controller.AnnounceMarriage(participant, available, _trump);
+            if (announced == null || !available.Contains(announced.Value))
+            {
+                return null;
+            }
+
+            int bonus = (_trump.HasValue && announced.Value == _trump.Value) ? 40 : 20;
+            participant.AddMarriagePoints(bonus);
+            _log($"  {participant.Player.Name} announces a marriage in {announced.Value} (+{bonus})");
+
+            return announced;
         }
 
         /// <summary>

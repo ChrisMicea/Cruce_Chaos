@@ -475,3 +475,60 @@ expected over a full match where the stronger engine compounds its edge.
 ">3 bid requires an announcement" gate we skipped. The greedy bid tuning remains
 provisional but now has a real signal available (match win rates) for future
 tuning.
+
+### Step 6: marriages (anunțări / 40-20) -- Christian
+
+Added marriages. A marriage is a Three + Four of the same suit; announcing it
+(by leading one of the two) grants a bonus that counts toward the team's point
+total: **40** if that suit is trump, **20** otherwise. No bid-exactly-1 caveat
+(Christian plays without it), and the ">3 bid needs a marriage" gate stays
+skipped as before.
+
+**Rules locked (all confirmed with Christian):** announce only when LEADING;
+announce by leading the 3 or 4 of the suit (the other card stays in hand);
+multiple marriages of different suits each announce separately; bonus points add
+to the same pool divided by 33 — which is how a side can exceed the 120 raw
+ceiling and earn a 4/5/6.
+
+**Detection** — `Hand.HasMarriage(suit)` and `Hand.MarriageSuits()`.
+
+**Scoring** — `RoundParticipant.MarriagePoints` (separate from captured card
+points, so the 120-point card checksum is unaffected). `ScoringUnit` gained
+`MarriagePoints` and `TotalPoints = captured + marriage`; `StandardRoundScorer`
+now divides `TotalPoints` (not just captured) by 33.
+
+**The announce decision + the lead coupling.** New `IPlayerController.AnnounceMarriage(self, available, trump)`,
+called by the engine only when the player is leading and holds a marriage;
+returns the suit to announce or null. The subtle part — "if you announce suit X
+you must lead the 3/4 of X" — was implemented as a **legality rule**
+(`AnnouncedMarriageLeadRule`, driven by a new `LegalMoveContext.AnnouncedSuit`),
+per Christian's suggestion, rather than ad-hoc filtering in the engine. So the
+engine decides + awards the bonus + stamps the suit on the context, and the
+pipeline enforces the lead restriction — consistent with how every other
+obligation works. Ordered right after `LeadTrumpOnOpeningRule` (and before the
+draw-phase short-circuit, so the narrowing survives the `Final` in 1v1).
+
+**Opening-lead interaction.** The opening lead must be trump
+(`LeadTrumpOnOpeningRule`). So on the opening lead only a *trump* marriage is
+offered (a non-trump marriage would conflict); other leads allow any held
+marriage. Handled in the engine's `ResolveAnnouncement`.
+
+**AI.** Baseline never announces (forfeits the bonus — consistent with its
+do-nothing tier). Greedy always announces when able, preferring the trump
+marriage (40 > 20); because the engine restricts the lead to the announced 3/4
+via the rule, the greedy `ChooseCard` needs no coordination.
+
+**Verification.** Clean build (removed a stray duplicate `using System;` that
+had crept into RoundEngine.cs and Program.cs). The 120-point CARD checksum still
+holds across all five modes (marriage points are tracked separately). Observed a
+round where the greedy AI announced a trump marriage (+40) AND a non-trump one
+(+20) in the same round, earning a team delta of +4 — impossible from the 120
+card pool alone, confirming marriages feed scoring correctly. All modes still
+play complete, terminating matches.
+
+**Status:** the five-step plan plus this step 6 are done. Core now covers: cards,
+the pipes-and-filters legality system, trump (declared via bidding), N-player +
+teams, bidding, reveal-and-draft, full match scoring with rotating dealer, and
+marriages. Remaining: greedy-doc "Measured performance" table is stale; a greedy
+bid/announce heuristic could use the real match-win signal for tuning; and the
+Unity presentation layer is untouched.

@@ -5,15 +5,17 @@ namespace CruceChaos.Core.Game.Scoring
     /// <summary>
     /// The standard Cruce round-scoring rule.
     ///
-    /// Victory points a team earns in a round = capturedPoints / 33 (integer
-    /// division: 0–32 → 0, 33–65 → 1, 66–98 → 2, ... 198+ → 6).
+    /// Victory points a team earns in a round = totalPoints / 33 (integer
+    /// division: 0–32 → 0, 33–65 → 1, ...), where totalPoints = captured card
+    /// points PLUS marriage bonuses (so marriages help make the contract).
     ///
     ///   - NON-bidding teams always ADD their earned victory points.
     ///   - The BIDDING team: if its earned victory points are at least its bid
     ///     (contract made), it ADDS its earned points; otherwise (contract
     ///     missed) it SUBTRACTS the BID value (not the earned points).
     ///
-    /// Announcements (40/20 marriages) are not yet factored in — that is step 6.
+    /// Marriage bonuses (40/20) are already included, because the scorer divides
+    /// each unit's <see cref="ScoringUnit.TotalPoints"/> (captured + marriage).
     /// </summary>
     public sealed class StandardRoundScorer : IRoundScorer
     {
@@ -26,7 +28,7 @@ namespace CruceChaos.Core.Game.Scoring
 
             foreach (ScoringUnit unit in result.ScoringUnits)
             {
-                int earned = unit.CapturedPoints / PointsPerVictoryPoint;
+                int earned = unit.TotalPoints / PointsPerVictoryPoint;
                 bool isBiddingTeam = unit.TeamIndex == result.BidWinnerTeam;
 
                 int delta;

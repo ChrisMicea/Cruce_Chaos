@@ -1,5 +1,4 @@
 using System;
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using CruceChaos.Core.Game;
@@ -63,7 +62,7 @@ namespace CruceChaos.Sandbox
             RuleSetFactory.Options options, int seed)
         {
             RuleSet ruleSet = config.DealStrategy == DealStrategy.DrawPilePerTrick
-                ? RuleSetFactory.TwoPlayerDrawPile(options)
+                ? RuleSetFactory.DrawPileRuleSet(options)
                 : RuleSetFactory.NoDrawPile(options);
 
             var engine = new RoundEngine(players, controllers, config, ruleSet, seed, Console.WriteLine);

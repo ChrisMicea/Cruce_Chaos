@@ -33,8 +33,9 @@ namespace CruceChaos.Core.Players.AI.GreedyHeuristic
 
         /// <summary>
         /// Section F: estimate hand strength as if the longest suit were trump
-        /// (which lead rule B.0 then realizes), and bid the highest contract the
-        /// estimate clears by <see cref="SafetyMargin"/>; otherwise pass. See
+        /// (which the AI then declares via DeclareTrump, so bid and trump agree),
+        /// and bid the highest contract the estimate clears by
+        /// <see cref="SafetyMargin"/>; otherwise pass. See
         /// docs/ai/greedy-heuristic.md for the rationale.
         /// </summary>
         public Bid PlaceBid(RoundParticipant self, BiddingContext context)
@@ -234,6 +235,22 @@ namespace CruceChaos.Core.Players.AI.GreedyHeuristic
         /// the suit the bid heuristic scored on, so the AI's bid and trump agree.
         /// </summary>
         public Suit DeclareTrump(RoundParticipant self) => LongestSuit(self.Hand.Cards);
+
+        /// <summary>
+        /// Always announce a marriage when able (free points) — prefer a trump
+        /// marriage (40) over a non-trump one (20). The engine then restricts
+        /// this lead to the announced suit's Three/Four, so ChooseCard needs no
+        /// coordination.
+        /// </summary>
+        public Suit? AnnounceMarriage(RoundParticipant self, IReadOnlyList<Suit> available, Suit? trump)
+        {
+            if (trump.HasValue && available.Contains(trump.Value))
+            {
+                return trump.Value;  // the 40-point marriage
+            }
+
+            return available[0];     // any 20-point marriage
+        }
 
         /// <summary>
         /// Draft the highest TRUMP available; if none, the highest-points card

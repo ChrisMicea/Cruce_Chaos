@@ -39,16 +39,26 @@ namespace CruceChaos.Core.Rules
         /// </summary>
         public bool IsOpeningLead { get; }
 
+        /// <summary>
+        /// When the leading player has announced a marriage this lead, the suit
+        /// of it; otherwise null. The AnnouncedMarriageLeadRule uses this to
+        /// require the lead to be the Three or Four of the announced suit.
+        /// </summary>
+        public Suit? AnnouncedSuit { get; }
+
         /// <summary>True when the player is leading (no card led yet this trick).</summary>
         public bool IsLeading => Trick.IsEmpty;
 
-        public LegalMoveContext(Hand hand, ITrickContext trick, Suit? trump, int drawPileCount, bool isOpeningLead = false)
+        public LegalMoveContext(
+            Hand hand, ITrickContext trick, Suit? trump, int drawPileCount,
+            bool isOpeningLead = false, Suit? announcedSuit = null)
         {
             Hand = hand;
             Trick = trick;
             Trump = trump;
             DrawPileCount = drawPileCount;
             IsOpeningLead = isOpeningLead;
+            AnnouncedSuit = announcedSuit;
         }
     }
 }

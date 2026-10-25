@@ -42,6 +42,16 @@ namespace CruceChaos.Core.Game
         /// </summary>
         public int CapturedPoints => _members.Sum(m => m.CapturedPoints);
 
+        /// <summary>Marriage bonus points for this unit — sum of members' marriage points.</summary>
+        public int MarriagePoints => _members.Sum(m => m.MarriagePoints);
+
+        /// <summary>
+        /// Total points for scoring = captured card points + marriage bonuses.
+        /// This is the figure the round scorer divides by 33, so marriages let a
+        /// side exceed 120 and make higher bids.
+        /// </summary>
+        public int TotalPoints => CapturedPoints + MarriagePoints;
+
         public ScoringUnit(int teamIndex)
         {
             TeamIndex = teamIndex;

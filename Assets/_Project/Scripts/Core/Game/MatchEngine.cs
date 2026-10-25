@@ -97,7 +97,7 @@ namespace CruceChaos.Core.Game
         private RuleSet BuildRuleSet()
         {
             return _config.DealStrategy == DealStrategy.DrawPilePerTrick
-                ? RuleSetFactory.TwoPlayerDrawPile(_config.RuleOptions)
+                ? RuleSetFactory.DrawPileRuleSet(_config.RuleOptions)
                 : RuleSetFactory.NoDrawPile(_config.RuleOptions);
         }
 

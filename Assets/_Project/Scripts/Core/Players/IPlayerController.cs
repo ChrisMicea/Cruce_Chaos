@@ -31,6 +31,16 @@ namespace CruceChaos.Core.Players
         Card ChooseDraftCard(RoundParticipant self, IReadOnlyList<Card> available, Suit trump);
 
         /// <summary>
+        /// Called when this player is LEADING and holds at least one marriage
+        /// (a Three + Four of the same suit). Return the suit to announce, or
+        /// null to not announce. If a suit is returned, the engine requires the
+        /// subsequent lead (from <see cref="ChooseCard"/>) to be the Three or
+        /// Four of that suit. <paramref name="available"/> lists the suits in
+        /// which a marriage is currently held (guaranteed non-empty).
+        /// </summary>
+        Suit? AnnounceMarriage(RoundParticipant self, IReadOnlyList<Suit> available, Suit? trump);
+
+        /// <summary>
         /// Decide this player's bid during the bidding phase. Return
         /// <see cref="Bid.Pass"/> to pass, or <see cref="Bid.Of"/> for a numeric
         /// contract. A numeric bid MUST be in
