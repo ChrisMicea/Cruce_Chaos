@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using CruceChaos.Core.Cards;
 using CruceChaos.Core.Players;
 using CruceChaos.Core.Rules;
@@ -7,125 +8,314 @@ using CruceChaos.Core.Rules;
 namespace CruceChaos.Core.Game
 {
     /// <summary>
-    /// Drives one full round of a 2-player "cu carti de jos" Cruce game:
+    /// Drives one full round of an N-player Cruce game, configured by a
+    /// <see cref="MatchConfig"/>:
     ///
-    ///   1. Shuffle and deal 8 cards each; 8 remain as the draw pile.
-    ///   2. Loop:
-    ///      a. Each player plays one card into the trick.
-    ///      b. The trick winner takes the card points and leads next.
-    ///      c. If the draw pile is not empty, both draw one card (winner first).
-    ///   3. Continue until all cards have been played.
-    ///   4. Report each player's captured card-points (out of 120).
+    ///   1. Shuffle and deal CardsPerPlayer to each seat; resolve any leftover
+    ///      per the config's <see cref="DealStrategy"/>.
+    ///   2. Loop: each player plays one card into the trick; the trick winner
+    ///      takes the card points and leads next; for DrawPilePerTrick, every
+    ///      player then draws one (winner first) until the pile is empty.
+    ///   3. Continue until all hands are empty.
+    ///   4. Return a <see cref="RoundResult"/> (per-team tallies + bid + trump).
     ///
-    /// Simplified for the first milestone: NO trump, NO follow-suit
-    /// enforcement, NO bidding. All cards are always legal to play.
+    /// Captured points are always awarded to the winning PARTICIPANT; a team's
+    /// total is the computed sum over its members (see <see cref="ScoringUnit"/>),
+    /// so individual and team play share one trick loop.
+    ///
+    /// Full flow: deal → bidding → the bid winner declares trump → (draft modes)
+    /// reveal-and-draft → play all tricks. Returns a <see cref="RoundResult"/>.
+    /// Converting a round's points into match score is the caller's job (see
+    /// <c>MatchEngine</c> / <c>IRoundScorer</c>).
     /// </summary>
     public sealed class RoundEngine
     {
+        private readonly MatchConfig _config;
         private readonly Deck _deck;
         private readonly RoundParticipant[] _participants;
         private readonly IPlayerController[] _controllers;
+        private readonly ScoringUnit[] _scoringUnits;      // one per team
+        private readonly ScoringUnit[] _unitOfSeat;        // seat -> its scoring unit
         private readonly LegalMoveEvaluator _legalMoves;
         private readonly Action<string> _log;
 
-        /// <summary>Index into <see cref="_participants"/> of whoever leads the next trick.</summary>
+        private readonly int _playerCount;
+
+        /// <summary>Seat index of whoever leads the next trick.</summary>
         private int _leaderIndex;
 
+        /// <summary>Winning bid value and the seat that made it (set during bidding).</summary>
+        private int? _winningBid;
+        private int _bidWinnerSeat = -1;
+
+        /// <summary>True until the first card of the round is played (for the opening-lead rule).</summary>
+        private bool _firstPlayOfRound = true;
+
         /// <summary>
-        /// The round's trump suit. Null until established. Per the current
-        /// rules, trump is set to the suit of the very first card played in the
-        /// round (see <see cref="EstablishTrumpIfUnset"/>). Isolating trump
-        /// establishment in one method means a future variant (e.g. the winning
-        /// bidder declares trump before any card is played) only changes WHERE
-        /// that method is called, not any of the code that reads _trump.
+        /// The round's trump suit. Declared by the bid winner before play (see
+        /// <see cref="DeclareTrump"/>); null until then, or if the mode has no
+        /// trump.
         /// </summary>
         private Suit? _trump;
 
+        /// <summary>Seat that bids first this round (rotated across rounds by the match loop).</summary>
+        private readonly int _startingBidderSeat;
+
         /// <summary>
         /// Creates the engine for one round.
-        ///
-        /// <paramref name="players"/> and <paramref name="controllers"/> must
-        /// be of length 2, paired by index (players[0] is controlled by
-        /// controllers[0], etc).
         /// </summary>
-        /// <param name="players">The two match-level players.</param>
-        /// <param name="controllers">The decision makers for each player.</param>
-        /// <param name="ruleSet">
-        /// The ordered legality rules in play for this round (built by
-        /// <see cref="RuleSetFactory"/> from the mode + player options).
-        /// </param>
+        /// <param name="players">The match-level players, one per seat; length must equal config.PlayerCount.</param>
+        /// <param name="controllers">Decision makers, paired by seat index with players.</param>
+        /// <param name="config">The match configuration (player count, deal sizes, teams, deal strategy, rule options).</param>
+        /// <param name="ruleSet">The ordered legality rules for this round.</param>
         /// <param name="seed">Optional RNG seed for a reproducible round.</param>
-        /// <param name="log">
-        /// Optional callback to receive human-readable play-by-play messages.
-        /// Pass null to suppress output.
-        /// </param>
-        public RoundEngine(Player[] players, IPlayerController[] controllers, RuleSet ruleSet, int? seed = null, Action<string> log = null)
+        /// <param name="log">Optional play-by-play log callback; null to suppress.</param>
+        /// <param name="startingBidderSeat">Seat that bids first (match loop rotates this across rounds).</param>
+        public RoundEngine(
+            Player[] players,
+            IPlayerController[] controllers,
+            MatchConfig config,
+            RuleSet ruleSet,
+            int? seed = null,
+            Action<string> log = null,
+            int startingBidderSeat = 0)
         {
-            if (players.Length != 2 || controllers.Length != 2)
+            _config = config;
+            _playerCount = config.PlayerCount;
+            _startingBidderSeat = ((startingBidderSeat % config.PlayerCount) + config.PlayerCount) % config.PlayerCount;
+
+            if (players.Length != _playerCount || controllers.Length != _playerCount)
             {
-                throw new ArgumentException("This engine supports exactly 2 players.");
+                throw new ArgumentException(
+                    $"Expected {_playerCount} players and controllers, got {players.Length} / {controllers.Length}.");
             }
 
-            // Forward the evaluator's safety-guard warnings into our log. The
-            // lambda defers to _log at call time, so it is fine that _log is
-            // assigned a few lines below this.
+            _log = log ?? (_ => { });
             _legalMoves = new LegalMoveEvaluator(ruleSet, msg => _log(msg));
             _deck = new Deck(seed);
-            _participants = new RoundParticipant[]
-            {
-                new RoundParticipant(players[0]),
-                new RoundParticipant(players[1])
-            };
             _controllers = controllers;
-            // Null object pattern: if no logger was supplied, fall back to a
-            // do-nothing lambda so every _log(...) call site is safe to call
-            // without a null check. '??' picks the left side unless it is null;
-            // '(_ => { })' is an Action<string> that ignores its argument ('_'
-            // is a throwaway name) and has an empty body, so it logs nothing.
-            _log = log ?? (_ => { });
+
+            // One participant per seat.
+            _participants = new RoundParticipant[_playerCount];
+            for (int seat = 0; seat < _playerCount; seat++)
+            {
+                _participants[seat] = new RoundParticipant(players[seat]);
+            }
+
+            // Build scoring units from the team layout, and map each seat to its
+            // unit. A unit per distinct team index; each participant joins the
+            // unit for its seat's team. Individual play => one unit per seat.
+            var unitByTeam = new Dictionary<int, ScoringUnit>();
+            _unitOfSeat = new ScoringUnit[_playerCount];
+            for (int seat = 0; seat < _playerCount; seat++)
+            {
+                int team = config.TeamOfSeat[seat];
+                if (!unitByTeam.TryGetValue(team, out ScoringUnit unit))
+                {
+                    unit = new ScoringUnit(team);
+                    unitByTeam[team] = unit;
+                }
+
+                unit.AddMember(_participants[seat]);
+                _unitOfSeat[seat] = unit;
+            }
+
+            _scoringUnits = new List<ScoringUnit>(unitByTeam.Values).ToArray();
             _leaderIndex = 0;
         }
 
         /// <summary>
-        /// Run the round from start to finish and return the two
-        /// <see cref="RoundParticipant"/> objects with their final captured
-        /// point tallies.
+        /// Run the round to completion: deal, bid, play all tricks. Returns the
+        /// <see cref="RoundResult"/> with per-team tallies and the recorded
+        /// (not yet scored) winning bid and trump.
         /// </summary>
-        public RoundParticipant[] Play()
+        public RoundResult Play()
         {
             Deal();
+            RunBidding();
+            DeclareTrump();
+            RunDraftIfNeeded();
             PlayAllTricks();
-            return _participants;
+            int bidWinnerTeam = _bidWinnerSeat >= 0 ? _config.TeamOfSeat[_bidWinnerSeat] : -1;
+            return new RoundResult(_scoringUnits, _winningBid, _bidWinnerSeat, bidWinnerTeam, _trump);
         }
 
-        /// <summary>
-        /// Shuffle, deal 8 cards to each participant. The remaining 8 form the
-        /// draw pile (they stay in the Deck).
-        /// </summary>
+        /// <summary>Participants in seat order (read-only), e.g. for reporting.</summary>
+        public IReadOnlyList<RoundParticipant> Participants => _participants;
+
+        // --- dealing --------------------------------------------------------
+
         private void Deal()
         {
             _deck.Reset();
             _deck.Shuffle();
 
-            for (int i = 0; i < 2; i++)
+            for (int seat = 0; seat < _playerCount; seat++)
             {
-                List<Card> dealt = _deck.Draw(8);
-                _participants[i].Hand.AddRange(dealt);
-                _log($"{_participants[i].Player.Name} receives: {_participants[i].Hand}");
+                List<Card> dealt = _deck.Draw(_config.CardsPerPlayer);
+                _participants[seat].Hand.AddRange(dealt);
+                _log($"{_participants[seat].Player.Name} receives: {_participants[seat].Hand}");
             }
 
-            _log($"Draw pile: {_deck.Count} cards remaining.\n");
+            // Leftover (if any) stays in the deck for now. DrawPilePerTrick draws
+            // from it per trick; RevealAndDraft distributes it after trump is
+            // declared (see RunDraftIfNeeded); DealAll leaves none; BlindSurprise
+            // is not yet implemented.
+            if (_config.DealStrategy == DealStrategy.BlindSurprise)
+            {
+                throw new NotImplementedException("BlindSurprise deal strategy is not yet implemented.");
+            }
+
+            _log(_config.DealStrategy == DealStrategy.DrawPilePerTrick
+                ? $"Draw pile: {_deck.Count} cards remaining.\n"
+                : $"Leftover in deck: {_deck.Count}.\n");
+        }
+
+        // --- trump declaration & draft -------------------------------------
+
+        /// <summary>
+        /// The bid winner declares the round's trump suit, after bidding and
+        /// before the reveal/draft. Replaces the old "first card led sets trump".
+        /// </summary>
+        private void DeclareTrump()
+        {
+            RoundParticipant winner = _participants[_bidWinnerSeat];
+            _trump = _controllers[_bidWinnerSeat].DeclareTrump(winner);
+            _log($"  {winner.Player.Name} declares trump: {_trump}\n");
         }
 
         /// <summary>
-        /// Play tricks until both hands are empty. After each trick, if the
-        /// draw pile has cards, both players draw one.
+        /// RevealAndDraft only: reveal the leftover cards publicly, then the bid
+        /// winner picks one, then each other player picks one in clockwise order,
+        /// until the leftover is exhausted (leftover count == player count, so
+        /// each drafts exactly one). Trump is already declared, so controllers
+        /// may draft trump-aware.
         /// </summary>
+        private void RunDraftIfNeeded()
+        {
+            if (_config.DealStrategy != DealStrategy.RevealAndDraft)
+            {
+                return;
+            }
+
+            // Reveal everything remaining in the deck (public information).
+            var available = new List<Card>(_deck.Draw(_deck.Count));
+            _log($"--- Draft --- revealed: {string.Join(", ", available)}");
+
+            // Bid winner drafts first, then clockwise.
+            for (int i = 0; i < _playerCount && available.Count > 0; i++)
+            {
+                int seat = (_bidWinnerSeat + i) % _playerCount;
+                RoundParticipant p = _participants[seat];
+                Card picked = _controllers[seat].ChooseDraftCard(p, available, _trump.Value);
+
+                if (!available.Remove(picked))
+                {
+                    // Controller returned a card not on offer — defensively take
+                    // the first available instead of trusting the bad pick.
+                    picked = available[0];
+                    available.RemoveAt(0);
+                }
+
+                p.Hand.Add(picked);
+                _log($"  {p.Player.Name} drafts {picked}");
+            }
+
+            _log(string.Empty);
+        }
+
+        // --- bidding --------------------------------------------------------
+
+        /// <summary>
+        /// Run the bidding phase. Seats bid in order starting at
+        /// <see cref="_startingBidderSeat"/> (rotated per round by the match
+        /// loop); a pass drops a seat out; a numeric bid must exceed the current
+        /// high bid and not exceed the configured maximum (an out-of-range bid is
+        /// treated as a pass). Bidding ends when at most one seat is still in. If
+        /// every seat passes, the FORCED-1 rule applies: the last player to pass
+        /// is forced to a contract of 1. The winner becomes the opening leader.
+        /// </summary>
+        private void RunBidding()
+        {
+            _log("--- Bidding ---");
+
+            bool[] active = new bool[_playerCount];
+            for (int s = 0; s < _playerCount; s++)
+            {
+                active[s] = true;
+            }
+
+            int highBid = 0;          // 0 == no numeric bid yet
+            int highSeat = -1;
+            int activeCount = _playerCount;
+            int lastPasserSeat = _startingBidderSeat;  // seat of the most recent pass (for forced-1)
+
+            int seat = _startingBidderSeat;
+            // Cycle through seats until at most one remains active. A seat that
+            // is the sole remaining active bidder with a standing bid wins.
+            while (activeCount > 1 || (activeCount >= 1 && highSeat < 0))
+            {
+                if (active[seat])
+                {
+                    // If this seat already holds the high bid and is the only
+                    // one left active, it wins — stop.
+                    if (activeCount == 1 && highSeat == seat)
+                    {
+                        break;
+                    }
+
+                    var ctx = new BiddingContext(highBid > 0 ? highBid : (int?)null, _config.MaxBid);
+                    Bid bid = _controllers[seat].PlaceBid(_participants[seat], ctx);
+
+                    bool valid = !bid.IsPass && bid.Value >= ctx.MinLegalBid && bid.Value <= _config.MaxBid;
+
+                    if (valid)
+                    {
+                        highBid = bid.Value;
+                        highSeat = seat;
+                        _log($"  {_participants[seat].Player.Name} bids {highBid}");
+                    }
+                    else
+                    {
+                        active[seat] = false;
+                        activeCount--;
+                        lastPasserSeat = seat;
+                        _log($"  {_participants[seat].Player.Name} passes");
+                    }
+                }
+
+                // Safety: if nobody is active and nobody ever bid, break to the
+                // forced-1 handling below.
+                if (activeCount == 0)
+                {
+                    break;
+                }
+
+                seat = (seat + 1) % _playerCount;
+            }
+
+            if (highSeat < 0)
+            {
+                // Everyone passed — the LAST player who passed is forced to 1.
+                highSeat = lastPasserSeat;
+                highBid = 1;
+                _log($"  All passed — {_participants[highSeat].Player.Name} (last to pass) is forced to 1");
+            }
+
+            _winningBid = highBid;
+            _bidWinnerSeat = highSeat;
+            _leaderIndex = highSeat;
+
+            _log($"  => {_participants[highSeat].Player.Name} wins the bid at {highBid} and leads.\n");
+        }
+
+        // --- trick loop -----------------------------------------------------
+
         private void PlayAllTricks()
         {
             int trickNumber = 0;
 
-            while (!_participants[0].Hand.IsEmpty || !_participants[1].Hand.IsEmpty)
+            while (AnyHandNonEmpty())
             {
                 trickNumber++;
                 _log($"--- Trick {trickNumber} ---");
@@ -136,72 +326,102 @@ namespace CruceChaos.Core.Game
             }
         }
 
-        /// <summary>
-        /// Sets the round's trump suit from the first card played, if it has not
-        /// been set yet. Returns true if this call established trump (so the
-        /// caller can log it), false if trump was already set.
-        ///
-        /// This is the single point of trump establishment; see the field doc
-        /// on <see cref="_trump"/> for why that matters for future variants.
-        /// </summary>
-        private bool EstablishTrumpIfUnset(Card firstCard)
+        private bool AnyHandNonEmpty()
         {
-            if (_trump.HasValue)
+            foreach (RoundParticipant p in _participants)
             {
-                return false;
+                if (!p.Hand.IsEmpty)
+                {
+                    return true;
+                }
             }
 
-            _trump = firstCard.Suit;
-            return true;
+            return false;
         }
 
-        /// <summary>
-        /// Each participant plays one card, starting with the current leader.
-        /// </summary>
         private Trick PlayOneTrick()
         {
             Trick trick = new Trick();
-            trick.SetTrump(_trump);
-            // Draw-pile size is fixed for the duration of a trick (draws happen
-            // between tricks), so set it once here for controllers to read.
+            trick.SetTrump(_trump);  // trump was declared before play; fixed all round
+            // Draw-pile size is fixed for the duration of a trick.
             trick.SetDrawPileCount(_deck.Count);
 
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < _playerCount; i++)
             {
-                int seat = (_leaderIndex + i) % 2;
+                int seat = (_leaderIndex + i) % _playerCount;
                 RoundParticipant participant = _participants[seat];
                 IPlayerController controller = _controllers[seat];
 
-                // Legality is computed by the rule pipeline from the current
-                // state (hand, trick, trump, draw-pile size), so the engine
-                // stays mode-agnostic.
-                var context = new LegalMoveContext(participant.Hand, trick, _trump, drawPileCount: _deck.Count);
+                // The opening lead is the bid winner's very first play of the
+                // round; the LeadTrumpOnOpeningRule uses this to force a trump.
+                bool isOpeningLead = _firstPlayOfRound && trick.IsEmpty;
+
+                // Marriage announcement: only when leading. The engine decides,
+                // awards the bonus, and stamps the suit on the context so the
+                // AnnouncedMarriageLeadRule restricts the lead to its 3/4.
+                Suit? announcedSuit = null;
+                if (trick.IsEmpty)
+                {
+                    announcedSuit = ResolveAnnouncement(participant, controller, isOpeningLead);
+                }
+
+                var context = new LegalMoveContext(
+                    participant.Hand, trick, _trump, drawPileCount: _deck.Count,
+                    isOpeningLead: isOpeningLead, announcedSuit: announcedSuit);
                 IReadOnlyList<Card> legalMoves = _legalMoves.LegalMoves(context);
 
                 Card chosen = controller.ChooseCard(participant, legalMoves, trick);
                 participant.Hand.Remove(chosen);
                 trick.Add(participant, chosen);
+                _firstPlayOfRound = false;
 
-                // The first card played in the whole round fixes the trump suit.
-                bool trumpJustSet = EstablishTrumpIfUnset(chosen);
-                if (trumpJustSet)
-                {
-                    // Reflect the newly-established trump to later players in
-                    // this same trick (the leader had no trump info yet, which
-                    // is correct — they are the one who just set it).
-                    trick.SetTrump(_trump);
-                }
-
-                _log($"  {participant.Player.Name} plays {chosen}" +
-                     (trumpJustSet ? $"   (trump is now {chosen.Suit})" : string.Empty));
+                _log($"  {participant.Player.Name} plays {chosen}");
             }
 
             return trick;
         }
 
         /// <summary>
-        /// Award the trick's card points to the winner and set them as the
-        /// next trick's leader.
+        /// Ask the leading controller whether to announce a marriage, award the
+        /// bonus if it does, and return the announced suit (or null).
+        ///
+        /// On the OPENING lead the lead must be trump, so only a trump marriage
+        /// can be announced there; other leads allow any held marriage. The
+        /// bonus is 40 for a trump marriage, 20 otherwise, added to the
+        /// participant's marriage tally (which feeds the team's point total).
+        /// </summary>
+        private Suit? ResolveAnnouncement(RoundParticipant participant, IPlayerController controller, bool isOpeningLead)
+        {
+            List<Suit> available = participant.Hand.MarriageSuits().ToList();
+
+            // On the opening lead only a trump marriage is compatible with the
+            // forced-trump-lead rule.
+            if (isOpeningLead)
+            {
+                available = available.Where(s => _trump.HasValue && s == _trump.Value).ToList();
+            }
+
+            if (available.Count == 0)
+            {
+                return null;
+            }
+
+            Suit? announced = controller.AnnounceMarriage(participant, available, _trump);
+            if (announced == null || !available.Contains(announced.Value))
+            {
+                return null;
+            }
+
+            int bonus = (_trump.HasValue && announced.Value == _trump.Value) ? 40 : 20;
+            participant.AddMarriagePoints(bonus);
+            _log($"  {participant.Player.Name} announces a marriage in {announced.Value} (+{bonus})");
+
+            return announced;
+        }
+
+        /// <summary>
+        /// Award the trick's points to the winning participant (its scoring unit
+        /// total updates automatically), and set the winner as next leader.
         /// </summary>
         private void ResolveTrick(Trick trick)
         {
@@ -211,24 +431,25 @@ namespace CruceChaos.Core.Game
             winner.AddCapturedPoints(points);
             _leaderIndex = Array.IndexOf(_participants, winner);
 
+            ScoringUnit unit = _unitOfSeat[_leaderIndex];
             _log($"  => {winner.Player.Name} wins the trick ({points} pts). " +
-                 $"Running total: {winner.CapturedPoints}\n");
+                 $"Unit [{unit.Label}] total: {unit.CapturedPoints}\n");
         }
 
         /// <summary>
-        /// If cards remain in the draw pile, both players draw one (winner of
-        /// the last trick draws first).
+        /// For DrawPilePerTrick: if cards remain, every player draws one,
+        /// starting with the trick winner (now the leader), going clockwise.
         /// </summary>
         private void DrawFromPile()
         {
-            if (_deck.Count == 0)
+            if (_config.DealStrategy != DealStrategy.DrawPilePerTrick || _deck.Count == 0)
             {
                 return;
             }
 
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < _playerCount && _deck.Count > 0; i++)
             {
-                int seat = (_leaderIndex + i) % 2;
+                int seat = (_leaderIndex + i) % _playerCount;
                 Card drawn = _deck.Draw();
                 _participants[seat].Hand.Add(drawn);
                 _log($"  {_participants[seat].Player.Name} draws {drawn}");

@@ -14,6 +14,42 @@ namespace CruceChaos.Core.Players
     public interface IPlayerController
     {
         /// <summary>
+        /// Called only on the bid winner, after bidding and BEFORE the reveal/
+        /// draft. Declares the round's trump suit. The winner commits to trump
+        /// here, then (in draft modes) sees the revealed cards — the risk/reward
+        /// of declaring before knowing the draft.
+        /// </summary>
+        Suit DeclareTrump(RoundParticipant self);
+
+        /// <summary>
+        /// Called during the reveal-and-draft phase. Pick one card to take from
+        /// <paramref name="available"/> (the revealed, not-yet-taken leftover
+        /// cards), which is guaranteed non-empty; the returned card MUST be one
+        /// of its members. Trump is already declared (<paramref name="trump"/>),
+        /// so a controller may draft trump-aware.
+        /// </summary>
+        Card ChooseDraftCard(RoundParticipant self, IReadOnlyList<Card> available, Suit trump);
+
+        /// <summary>
+        /// Called when this player is LEADING and holds at least one marriage
+        /// (a Three + Four of the same suit). Return the suit to announce, or
+        /// null to not announce. If a suit is returned, the engine requires the
+        /// subsequent lead (from <see cref="ChooseCard"/>) to be the Three or
+        /// Four of that suit. <paramref name="available"/> lists the suits in
+        /// which a marriage is currently held (guaranteed non-empty).
+        /// </summary>
+        Suit? AnnounceMarriage(RoundParticipant self, IReadOnlyList<Suit> available, Suit? trump);
+
+        /// <summary>
+        /// Decide this player's bid during the bidding phase. Return
+        /// <see cref="Bid.Pass"/> to pass, or <see cref="Bid.Of"/> for a numeric
+        /// contract. A numeric bid MUST be in
+        /// [<see cref="BiddingContext.MinLegalBid"/>, <see cref="BiddingContext.MaxBid"/>];
+        /// the engine re-validates and treats an out-of-range bid as a pass.
+        /// </summary>
+        Bid PlaceBid(RoundParticipant self, BiddingContext context);
+
+        /// <summary>
         /// Choose which card to play from <paramref name="legalMoves"/>.
         ///
         /// <paramref name="legalMoves"/> is guaranteed non-empty, and the

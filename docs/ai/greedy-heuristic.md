@@ -59,21 +59,18 @@ Decide in this order:
 
 ## B. When LEADING (I choose the suit)
 
-Leading depends on whether the draw pile still has cards (the "cu carti de jos"
-phase, where there is no follow-suit obligation).
+Leading depends only on whether the draw pile still has cards. Trump is declared explicitly before
+play (section G), and the "bid winner must lead trump on the opening" obligation
+is enforced by the **legality pipeline** (`LeadTrumpOnOpeningRule`), which
+pre-filters `legalMoves` to trump on that one lead. So on the opening lead the
+rules below simply pick among the trump-only set the pipeline provides — no
+engine-side AI logic needed.
 
-1. **Draw-phase lead (draw pile NOT empty):** play the highest-**points**
-   NON-trump card (tie-break highest strength).
+1. **Draw-phase lead (draw pile NOT empty):** play the
+   highest-**points** NON-trump card (tie-break highest strength).
    Rationale: while cards remain to draw there is no follow-suit obligation, so
    a high card led is relatively safe, and you refill your hand anyway — so
    hoarding value is pointless. Bank points early instead.
-
-   This rule also governs the **very first lead of the round**, which is the
-   card that establishes trump. Trump therefore falls out as a *side effect*:
-   it becomes the suit of whatever highest-value non-trump card gets led. The
-   AI does NOT deliberately choose trump by suit length — a single draw-phase
-   lead rule was chosen for simplicity (the exact trump suit barely moves the
-   game at large).
 
 2. **Normal lead (draw pile empty):** play the lowest-**points** NON-trump card
    (tie-break lowest strength). Once follow-suit is in force, a cheap probe is
@@ -91,9 +88,10 @@ phase, where there is no follow-suit obligation).
 > cards. Future modes without a draw pile simply never trigger B.1, which is
 > correct.
 
-> Known crude spot: on the opening lead, "lead highest-value non-trump" is
-> slightly incoherent because the suit you lead becomes trump — you cannot avoid
-> making trump out of the card you lead. Accepted as-is for this tier.
+> Opening-lead note: the opening lead is NOT special-cased in the AI. Trump is
+> declared explicitly before play (section G), and the forced-trump opening is
+> enforced by the legality pipeline, which filters this lead to trumps. The AI
+> rules above then just pick among that filtered set.
 
 ## C. Trump handling (cross-cutting)
 
@@ -119,9 +117,70 @@ phase, where there is no follow-suit obligation).
   then lowest-points** one deterministically (no randomness), so games are
   reproducible for a given seed.
 
+## F. Bidding
+
+The bid estimates hand strength and commits to capturing ~33×S of the 120 card
+points. Overbidding is punished, so the engine is deliberately **conservative**:
+bid the floor of what the hand can likely make, lean toward passing.
+
+Strength is evaluated **as if the hand's longest suit were trump** — which is
+consistent with the trump declaration (section G), which actually declares that
+same suit. So:
+
+1. **Pick the candidate trump:** the suit with the most cards (tie-break: most
+   total points). Call its cards the *trumps*.
+
+2. **Score the hand** (a rough expected-capture estimate, in points):
+   - Count trump length. Each trump beyond the first is worth a flat
+     `TrumpLengthValue` (long trump = control).
+   - Add the **points of high cards you are likely to keep**: trump Aces/Tens
+     count fully; non-trump Aces/Tens count partially (they can be trumped), and
+     only if backed by at least one other card of their suit (a *guarded*
+     honor). Bare non-trump honors count little.
+   - This is intentionally crude — a static hand score, no opponent modelling.
+
+3. **Map score → bid:** bid the highest S whose `33 × S` the score clears by a
+   safety margin `M`; if even S=1 is not cleared, **pass**. Numeric constants
+   (`TrumpLengthValue`, the honor weights, `M`) live in the controller and are
+   tuned empirically.
+
+4. **Respect the context:** never bid below `MinLegalBid` or above `MaxBid`; if
+   the next legal bid exceeds what the score justifies, pass.
+
+### Known limitations (accepted for this tier)
+
+- **Teams:** in 2v2 the TEAM must make 33×S, so own-hand-only scoring will
+  *under-bid* with a strong partner. Not corrected yet.
+- No announcements (40/20 marriages) factor into the bid.
+- No opponent modelling or memory — purely static hand evaluation.
+
+## G. Trump declaration & drafting
+
+After winning the bid, the AI makes two further decisions (both are explicit
+`IPlayerController` calls, happening before any card is played):
+
+1. **Declare trump** (`DeclareTrump`): the **longest suit** (tie-break most
+   total points) — the SAME suit the bid heuristic (F) scored on, so the bid and
+   the declared trump always agree. The forced-trump opening lead (enforced by
+   the pipeline) then means the AI opens with a trump it is long in.
+
+2. **Draft** (`ChooseDraftCard`, only in reveal-and-draft modes): take the
+   **highest trump** available; if none is revealed, take the **highest-points**
+   card (tie-break highest strength). Trump beats everything, so grabbing the
+   best trump is the greedy pick. Trump is already declared when drafting, so
+   this is trump-aware.
+
+   NOTE: the AI does NOT gamble — it will not overbid hoping the draft rescues a
+   weak hand. That risk/reward depth is left for a smarter engine; here the bid
+   is committed conservatively before the reveal and the draft is a plain greedy
+   grab.
+
 ## Summary (the whole engine in one breath)
 
-> Follow: win with the cheapest card that wins, 
-> else throw the lowest-point card, preferring to
-> keep trump. Lead: the cheapest non-trump card. Never waste high cards or trump
-> on tricks that don't need them.
+> Bid conservatively on longest-suit-as-trump hand strength, else pass. Declare
+> that longest suit as trump; draft the best trump (else highest value). Opening
+> lead is forced to trump by the rules (not AI logic). Other draw-phase leads:
+> bank the highest-value non-trump. Normal leads: cheapest non-trump. Follow:
+> win with the cheapest card that wins, else throw the lowest-point card, keeping
+> trump. Never waste high cards or trump on tricks that don't need them, and
+> never gamble.
