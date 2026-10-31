@@ -5,46 +5,49 @@ using TMPro;
 namespace CruceChaos.Unity
 {
     /// <summary>
-    /// Tracks the match-level score across multiple rounds (Cruce is played to
-    /// a target number of rounds won, not just card points).
+    /// Tracks VP scores across rounds and decides when the match is over.
     ///
-    /// In Cruce scoring, each round awards 1–6 points depending on the margin:
-    ///   - Loser gets 0 pts  → winner +4 (clean sweep, "rupt")
-    ///   - Loser gets 1–30   → winner +3
-    ///   - Loser gets 31–60  → winner +2
-    ///   - Loser gets 61+    → winner +1
+    /// Scoring (mirrors StandardRoundScorer):
+    ///   - Both teams earn VP = their totalPoints / 33 independently.
+    ///   - The bidding team: if they earned >= bid → keep earned VP;
+    ///     if they missed → subtract the bid instead.
+    ///   - Non-bidding team: always keeps earned VP.
     ///
-    /// The first player to reach <see cref="_targetMatchPoints"/> wins the match.
-    ///
-    /// SCENE SETUP:
-    ///   Add this component to the same GameObject as GameManager (or a
-    ///   persistent singleton object).
-    ///   Wire the labels in the Inspector.
-    ///   The GameManager calls <see cref="ReportRoundResult"/> after each round.
+    /// Match ends when either player reaches _targetMatchPoints AND leads by >= 2.
     /// </summary>
     public class MatchManager : MonoBehaviour
     {
         [Header("Match Settings")]
-        [Tooltip("First player to reach this many match points wins the whole match.")]
-        [SerializeField] private int _targetMatchPoints = 7;
+        [SerializeField] private int _targetMatchPoints = 11;
 
-        [Header("HUD References")]
+        [Header("HUD — Match Score Labels")]
         [SerializeField] private TextMeshProUGUI _humanMatchScoreLabel;
         [SerializeField] private TextMeshProUGUI _aiMatchScoreLabel;
-        [SerializeField] private GameObject _matchOverPanel;
+
+        [Header("Match Over Panel")]
+        [SerializeField] private GameObject      _matchOverPanel;
         [SerializeField] private TextMeshProUGUI _matchOverLabel;
 
         [Header("Scene Navigation")]
         [SerializeField] private string _mainMenuScene = "Main Menu";
 
-        // Match-level scores (these persist for the whole match).
         private int _humanMatchScore;
         private int _aiMatchScore;
+
+        /// <summary>True after the match-over condition is reached.</summary>
+        public bool IsMatchOver { get; private set; }
+
+        /// <summary>Current human VP score for display.</summary>
+        public int HumanMatchScore => _humanMatchScore;
+
+        /// <summary>Current AI VP score for display.</summary>
+        public int AIMatchScore => _aiMatchScore;
 
         private void Start()
         {
             _humanMatchScore = 0;
             _aiMatchScore    = 0;
+            IsMatchOver      = false;
             RefreshLabels();
             if (_matchOverPanel != null) _matchOverPanel.SetActive(false);
         }
@@ -52,59 +55,86 @@ namespace CruceChaos.Unity
         // ── Public API ─────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Called by GameManager at the end of each round with the two players'
-        /// final card-point totals (out of 120).
+        /// Call at the end of each round.
+        ///
+        /// humanTotalPts / aiTotalPts  = captured card pts + marriage pts
+        /// winningBid                  = the bid the winner placed (null if no bid info)
+        /// humanWonBid                 = true if the human was the bidding team
         /// </summary>
-        public void ReportRoundResult(int humanCardPts, int aiCardPts)
+        public void ReportRoundResult(
+            int  humanTotalPts,
+            int  aiTotalPts,
+            int? winningBid    = null,
+            bool humanWonBid   = false)
         {
-            int humanDelta = 0;
-            int aiDelta    = 0;
+            int humanEarned = humanTotalPts / 33;
+            int aiEarned    = aiTotalPts    / 33;
 
-            if (humanCardPts > aiCardPts)
-                humanDelta = PointDelta(loserPts: aiCardPts);
-            else if (aiCardPts > humanCardPts)
-                aiDelta = PointDelta(loserPts: humanCardPts);
-            // Draw: no match points awarded (extremely rare — only if both = 60).
+            int humanDelta;
+            int aiDelta;
+
+            if (winningBid.HasValue)
+            {
+                int bid = winningBid.Value;
+                if (humanWonBid)
+                {
+                    // Human is the bidding team.
+                    humanDelta = humanEarned >= bid ? humanEarned : -bid;
+                    aiDelta    = aiEarned;
+                }
+                else
+                {
+                    // AI is the bidding team.
+                    aiDelta    = aiEarned >= bid ? aiEarned : -bid;
+                    humanDelta = humanEarned;
+                }
+            }
+            else
+            {
+                // No bid info — fall back to simple earned VP.
+                humanDelta = humanEarned;
+                aiDelta    = aiEarned;
+            }
 
             _humanMatchScore += humanDelta;
             _aiMatchScore    += aiDelta;
 
-            Debug.Log($"[Match] Round result: Human +{humanDelta} / AI +{aiDelta}. " +
-                      $"Match score: Human {_humanMatchScore} – AI {_aiMatchScore}");
+            Debug.Log($"[Match] Human +{humanDelta} ({humanTotalPts} pts) / " +
+                      $"AI +{aiDelta} ({aiTotalPts} pts). " +
+                      $"Standings: {_humanMatchScore} – {_aiMatchScore}");
 
             RefreshLabels();
-
-            if (_humanMatchScore >= _targetMatchPoints || _aiMatchScore >= _targetMatchPoints)
-                ShowMatchOver();
+            CheckMatchOver();
         }
 
-        /// <summary>Resets the match score and hides the match-over panel.</summary>
         public void ResetMatch()
         {
             _humanMatchScore = 0;
             _aiMatchScore    = 0;
+            IsMatchOver      = false;
             RefreshLabels();
             if (_matchOverPanel != null) _matchOverPanel.SetActive(false);
         }
 
-        // Called by "Back to Menu" button on the match-over panel.
         public void OnMainMenuClicked()
         {
             SceneManager.LoadScene(_mainMenuScene);
         }
 
-        // ── Private helpers ────────────────────────────────────────────────────
+        // ── Private ────────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Returns how many match points the winner earns, based on the loser's
-        /// card-point total.
-        /// </summary>
-        private static int PointDelta(int loserPts)
+        private void CheckMatchOver()
         {
-            if (loserPts == 0)  return 4; // rupt — clean sweep
-            if (loserPts <= 30) return 3;
-            if (loserPts <= 60) return 2;
-            return 1;
+            int hi  = Mathf.Max(_humanMatchScore, _aiMatchScore);
+            int lo  = Mathf.Min(_humanMatchScore, _aiMatchScore);
+            bool targetReached = hi >= _targetMatchPoints;
+            bool clearLead     = (hi - lo) >= 2;
+
+            if (targetReached && clearLead)
+            {
+                IsMatchOver = true;
+                ShowMatchOver();
+            }
         }
 
         private void RefreshLabels()
@@ -122,7 +152,7 @@ namespace CruceChaos.Unity
 
             if (_matchOverLabel != null)
             {
-                bool humanWins = _humanMatchScore >= _targetMatchPoints;
+                bool humanWins = _humanMatchScore > _aiMatchScore;
                 _matchOverLabel.text = humanWins
                     ? $"You win the match!\n{_humanMatchScore} – {_aiMatchScore}"
                     : $"AI wins the match!\n{_humanMatchScore} – {_aiMatchScore}";

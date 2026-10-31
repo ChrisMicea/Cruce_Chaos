@@ -37,6 +37,10 @@ namespace CruceChaos.Unity
         [SerializeField] private GameObject _resultBanner;
         [SerializeField] private TextMeshProUGUI _resultLabel;
 
+        [Header("Persistent Info Label")]
+        [Tooltip("A label shown centre-screen for bid winner / trump announcements. Stays until ClearPersistentInfo() is called.")]
+        [SerializeField] private TextMeshProUGUI _persistentInfoLabel;
+
         // ---- Public API -------------------------------------------------------
 
         /// <summary>Updates the human player's captured card-point total.</summary>
@@ -86,26 +90,109 @@ namespace CruceChaos.Unity
         }
 
         /// <summary>
-        /// Shows the end-of-round result banner.
+        /// Shows the end-of-round result banner with full scoring breakdown:
+        /// card points, bid outcome, VP delta for each side, and running match scores.
         /// </summary>
+        public void ShowResult(
+            int  humanCardPts,   int aiCardPts,
+            int  humanTotal,     int aiTotal,
+            int? winningBid,     bool humanWonBid,
+            int  humanVPDelta,   int aiVPDelta,
+            int  humanMatchScore, int aiMatchScore)
+        {
+            if (_resultBanner == null) return;
+            _resultBanner.SetActive(true);
+
+            if (_resultLabel == null) return;
+
+            // ── Line 1: card points ──────────────────────────────────────────
+            string pointsLine = $"You: {humanTotal} pts     AI: {aiTotal} pts";
+
+            // ── Line 2: bid outcome ──────────────────────────────────────────
+            string bidLine = "";
+            if (winningBid.HasValue)
+            {
+                int bid         = winningBid.Value;
+                string bidder   = humanWonBid ? "You" : "AI";
+                int bidderTotal = humanWonBid ? humanTotal : aiTotal;
+                int bidderVP    = bidderTotal / 33;
+                bool made       = bidderVP >= bid;
+                string outcome  = made ? "✓ made" : "✗ missed";
+                bidLine = $"Bid: {bidder} bid {bid} — {outcome} ({bidderVP} VP earned)";
+            }
+
+            // ── Line 3: VP gained ────────────────────────────────────────────
+            string humanDeltaStr = humanVPDelta >= 0 ? $"+{humanVPDelta}" : $"{humanVPDelta}";
+            string aiDeltaStr    = aiVPDelta    >= 0 ? $"+{aiVPDelta}"    : $"{aiVPDelta}";
+            string vpLine        = $"VP:  You {humanDeltaStr}     AI {aiDeltaStr}";
+
+            // ── Line 4: running match score ──────────────────────────────────
+            string standingsLine = $"Match:  You {humanMatchScore}  –  AI {aiMatchScore}";
+
+            _resultLabel.text = string.Join("\n", pointsLine, bidLine, vpLine, standingsLine);
+        }
+
+        /// <summary>Simple overload — used when match manager is not assigned.</summary>
         public void ShowResult(int humanPts, int aiPts)
         {
             if (_resultBanner == null) return;
-
             _resultBanner.SetActive(true);
-
             if (_resultLabel != null)
-            {
-                string outcome;
-                if (humanPts > aiPts)
-                    outcome = $"You win!\n{humanPts} – {aiPts}";
-                else if (aiPts > humanPts)
-                    outcome = $"AI wins!\n{humanPts} – {aiPts}";
-                else
-                    outcome = $"Draw!\n{humanPts} – {aiPts}";
+                _resultLabel.text = humanPts > aiPts
+                    ? $"You win!\n{humanPts} – {aiPts}"
+                    : aiPts > humanPts
+                        ? $"AI wins!\n{humanPts} – {aiPts}"
+                        : $"Draw!\n{humanPts} – {aiPts}";
+        }
 
-                _resultLabel.text = outcome;
+        /// <summary>
+        /// Shows a message that stays visible until ClearPersistentInfo() is called.
+        /// Use for bid winner and trump declaration announcements.
+        /// </summary>
+        public void ShowPersistentInfo(string message)
+        {
+            if (_persistentInfoLabel != null)
+            {
+                _persistentInfoLabel.text    = message;
+                _persistentInfoLabel.enabled = true;
             }
+        }
+
+        /// <summary>Clears the persistent info label.</summary>
+        public void ClearPersistentInfo()
+        {
+            if (_persistentInfoLabel != null)
+                _persistentInfoLabel.enabled = false;
+        }
+
+        /// <summary>
+        /// Shows a temporary bid status message (e.g. "You bid 3", "AI passed").
+        /// If no label is wired, falls back to a Debug.Log.
+        /// </summary>
+        public void ShowBidInfo(string message)
+        {
+            // Reuse the trump label as a temporary message area if no dedicated label exists.
+            if (_trumpLabel != null)
+                StartCoroutine(TempMessage(_trumpLabel, message, 1.2f));
+            else
+                Debug.Log("[BidInfo] " + message);
+        }
+
+        /// <summary>
+        /// Flashes a marriage bonus notification ("+40" or "+20").
+        /// </summary>
+        public void ShowMarriageBonus(int bonus)
+        {
+            if (_trumpLabel != null)
+                StartCoroutine(TempMessage(_trumpLabel, $"Marriage +{bonus}!", 1.5f));
+        }
+
+        private System.Collections.IEnumerator TempMessage(TMPro.TextMeshProUGUI label, string msg, float duration)
+        {
+            string prev = label.text;
+            label.text = msg;
+            yield return new UnityEngine.WaitForSeconds(duration);
+            label.text = prev;
         }
 
         /// <summary>Hides the result banner (call at the start of a new round).</summary>
