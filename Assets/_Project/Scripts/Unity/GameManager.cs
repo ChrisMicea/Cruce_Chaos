@@ -60,17 +60,22 @@ namespace CruceChaos.Unity
         [SerializeField] [Range(0.3f, 2f)]  private float _trickResolvePause  = 1.0f;
 
         [Header("Hand Fan Layout")]
-        [Tooltip("Total angle of the fan in degrees. 40–60 works well for 8 cards.")]
-        [SerializeField] [Range(10f, 120f)] private float _fanTotalAngle = 50f;
+        [Tooltip("Angle between adjacent cards in degrees. Controls density regardless of hand size.")]
+        [SerializeField] [Range(1f, 15f)] private float _fanAnglePerCard = 4f;
+        [Tooltip("Maximum total spread in degrees — prevents wide gaps with few cards.")]
+        [SerializeField] [Range(5f, 60f)]  private float _fanMaxAngle    = 28f;
         [Tooltip("Radius of the imaginary circle the cards sit on. Larger = flatter arc.")]
-        [SerializeField] [Range(800f, 4000f)] private float _fanRadius   = 1800f;
+        [SerializeField] [Range(800f, 4000f)] private float _fanRadius   = 2200f;
         [Tooltip("Vertical offset so cards peek up from the bottom of the screen.")]
-        [SerializeField] private float _fanYOffset = 80f;
+        [SerializeField] private float _fanYOffset = 120f;
 
         [Header("Game Rules")]
         [SerializeField] private bool _mustRaiseWhenFollowing = false;
 
-        [Header("Match Scoring")]
+        [Header("Sort / Shuffle")]
+        [SerializeField] private bool _autoSort = false;
+        [Tooltip("The auto-sort toggle button's highlight overlay — turns gold when ON.")]
+        [SerializeField] private UnityEngine.UI.Image _autoSortHighlight;
         [SerializeField] private MatchManager _matchManager;
 
         [Header("Logging")]
@@ -103,6 +108,9 @@ namespace CruceChaos.Unity
 
         private readonly List<CardView>   _humanCardViews  = new List<CardView>();
         private readonly List<GameObject> _aiCardBackViews = new List<GameObject>();
+        // Tracks the display order of human cards independently of Hand.Cards order.
+        // Sort/shuffle reorder this list; new cards drawn are appended at the end.
+        private readonly List<Card>       _handDisplayOrder = new List<Card>();
 
         // ── Unity lifecycle ───────────────────────────────────────────────────
 
@@ -156,6 +164,7 @@ namespace CruceChaos.Unity
                 _deck.Count);
 
             ClearAllCardViews();
+            _handDisplayOrder.Clear();
             _trickAreaView?.ClearTrick();
             _scoreHUD?.HideResult();
             _scoreHUD?.SetTrump(null);
@@ -163,6 +172,7 @@ namespace CruceChaos.Unity
             _scoreHUD?.SetHumanPoints(0);
             _scoreHUD?.SetAIPoints(0);
 
+            ApplyAutoSort();
             RebuildHumanHand();
             RebuildAIHand();
 
@@ -351,6 +361,7 @@ namespace CruceChaos.Unity
             _scoreHUD?.ShowPersistentInfo($"{declarer} trump: {suitName}");
             _scoreHUD?.SetTrump(_trump);
             _trickAreaView?.SetTrump(_trump);
+            ApplyTrumpHighlights();
             _gameLogger?.LogTrumpDeclared(_bidWinnerSeat == 0 ? "You" : "AI", suitName);
             Debug.Log($"[Cruce] Trump declared: {_trump}");
             yield return new WaitForSeconds(1.5f);
@@ -538,19 +549,32 @@ namespace CruceChaos.Unity
             RoundParticipant first  = _leaderIndex == 0 ? _humanParticipant : _aiParticipant;
             RoundParticipant second = _leaderIndex == 0 ? _aiParticipant    : _humanParticipant;
 
-            first.Hand.Add(_deck.Draw());
-            second.Hand.Add(_deck.Draw());
+            Card firstCard  = _deck.Draw();
+            Card secondCard = _deck.Draw();
+            first.Hand.Add(firstCard);
+            second.Hand.Add(secondCard);
+
+            // Append the new human card at the end of the display order.
+            if (first == _humanParticipant)
+                _handDisplayOrder.Add(firstCard);
+            else
+                _handDisplayOrder.Add(secondCard);
 
             _scoreHUD?.SetDeckCount(_deck.Count);
+            ApplyAutoSort();
             RebuildHumanHand();
             RebuildAIHand();
+            ApplyTrumpHighlights();
         }
 
         // ── Hand view management ──────────────────────────────────────────────
 
         private void DealCards(int count, RoundParticipant participant)
         {
-            participant.Hand.AddRange(_deck.Draw(count));
+            var dealt = _deck.Draw(count);
+            participant.Hand.AddRange(dealt);
+            if (participant == _humanParticipant)
+                _handDisplayOrder.AddRange(dealt);
         }
 
         private void RebuildHumanHand()
@@ -561,18 +585,23 @@ namespace CruceChaos.Unity
 
             if (_humanHandArea == null || _cardPrefab == null) return;
 
-            IReadOnlyList<Card> cards = _humanParticipant.Hand.Cards;
-            int count = cards.Count;
+            // Use _handDisplayOrder to preserve sort/shuffle across rebuilds.
+            // Sync it with the actual hand first (remove any cards no longer held).
+            _handDisplayOrder.RemoveAll(c => !_humanParticipant.Hand.Contains(c));
+            // Add any cards in hand that aren't tracked yet (safety net).
+            foreach (Card c in _humanParticipant.Hand.Cards)
+                if (!_handDisplayOrder.Contains(c)) _handDisplayOrder.Add(c);
+
+            int count = _handDisplayOrder.Count;
             if (count == 0) return;
 
-            // ── Fan / arc layout ─────────────────────────────────────────────
-            // The cards are placed on an imaginary circle of radius _fanRadius.
-            // The circle centre sits below the hand area so only the top arc
-            // is visible. Each card is rotated to be tangent to the circle.
+            // ── Fan layout ───────────────────────────────────────────────────
+            // Each card sits on a circle of _fanRadius centred at (0, -_fanRadius)
+            // relative to the HumanHandArea pivot.
+            // angleDeg=0 → card straight up at (0,0); negative angles → left; positive → right.
 
-            float totalAngle = _fanTotalAngle;
-            float angleStep  = count > 1 ? totalAngle / (count - 1) : 0f;
-            float startAngle = -totalAngle * 0.5f; // degrees, 0 = straight up
+            float halfAngle = FanAngleForCount(count) * 0.5f;
+            float angleStep = count > 1 ? FanAngleForCount(count) / (count - 1) : 0f;
 
             for (int i = 0; i < count; i++)
             {
@@ -580,20 +609,25 @@ namespace CruceChaos.Unity
                 CardView cv   = go.GetComponent<CardView>();
                 if (cv == null) continue;
 
-                float angleDeg = startAngle + i * angleStep;
+                // Angle from centre: left cards negative, right cards positive.
+                float angleDeg = count > 1 ? -halfAngle + i * angleStep : 0f;
                 float angleRad = angleDeg * Mathf.Deg2Rad;
 
-                // Position on the arc: circle centre is at (0, -_fanRadius)
-                // relative to the hand area pivot.
+                // Circle centre is at (0, -_fanRadius) in local space.
+                // Card position = centre + radius * (sin(angle), cos(angle))
                 float x = _fanRadius * Mathf.Sin(angleRad);
-                float y = _fanRadius * (1f - Mathf.Cos(angleRad)) - _fanRadius + _fanYOffset;
+                float y = -_fanRadius + _fanRadius * Mathf.Cos(angleRad) + _fanYOffset;
 
                 Vector2 basePos = new Vector2(x, y);
 
-                Sprite sprite = _spriteRegistry != null ? _spriteRegistry.GetSprite(cards[i]) : null;
-                cv.Initialise(cards[i], sprite, basePos, angleDeg);
+                Card card = _handDisplayOrder[i];
+                Sprite sprite = _spriteRegistry != null ? _spriteRegistry.GetSprite(card) : null;
+                cv.Initialise(card, sprite, basePos, angleDeg);
                 cv.OnCardClicked += _humanController.HandleCardClicked;
                 _humanCardViews.Add(cv);
+
+                // Left cards render under right cards.
+                go.transform.SetSiblingIndex(i);
             }
         }
 
@@ -608,11 +642,9 @@ namespace CruceChaos.Unity
             int count = _aiParticipant.Hand.Count;
             if (count == 0) return;
 
-            // Smaller fan for the AI hand at the top (flipped).
-            float totalAngle = _fanTotalAngle * 0.7f;
-            float angleStep  = count > 1 ? totalAngle / (count - 1) : 0f;
-            float startAngle = -totalAngle * 0.5f;
-            float radius     = _fanRadius * 0.6f;
+            float halfAngle = FanAngleForCount(count) * 0.35f;
+            float angleStep = count > 1 ? (halfAngle * 2f) / (count - 1) : 0f;
+            float radius    = _fanRadius * 0.5f;
 
             for (int i = 0; i < count; i++)
             {
@@ -630,16 +662,20 @@ namespace CruceChaos.Unity
                 RectTransform rt = go.GetComponent<RectTransform>();
                 if (rt != null)
                 {
-                    float angleDeg = startAngle + i * angleStep;
+                    float angleDeg = count > 1 ? -halfAngle + i * angleStep : 0f;
                     float angleRad = angleDeg * Mathf.Deg2Rad;
 
-                    float x = radius * Mathf.Sin(angleRad);
-                    float y = -(radius * (1f - Mathf.Cos(angleRad)) - radius);
+                    // Same formula as human fan but circle centre is ABOVE the pivot.
+                    // Human: centre at (0, -radius) → cards arc upward.
+                    // AI:    centre at (0, +radius) → cards arc downward (outward).
+                    float x =  radius * Mathf.Sin(angleRad);
+                    float y =  radius - radius * Mathf.Cos(angleRad);
 
-                    rt.anchoredPosition = new Vector2(x, y);
-                    rt.sizeDelta        = new Vector2(130f, 195f);
-                    // Flip rotation for top of screen (cards point downward).
-                    rt.localRotation    = Quaternion.Euler(0f, 0f, -angleDeg + 180f);
+                    // y is positive = downward from the AIHandArea pivot (which is at top).
+                    rt.anchoredPosition = new Vector2(x, -y - _fanYOffset * 0.3f);
+                    rt.sizeDelta        = new Vector2(120f, 180f);
+                    // Rotate card to face downward and follow the arc tangent.
+                    rt.localRotation    = Quaternion.Euler(0f, 0f, -angleDeg);
                 }
 
                 _aiCardBackViews.Add(go);
@@ -652,8 +688,56 @@ namespace CruceChaos.Unity
             foreach (CardView cv in _humanCardViews)
                 if (cv != null && cv.Card == card) { toRemove = cv; break; }
             if (toRemove == null) return;
+
             _humanCardViews.Remove(toRemove);
+            _handDisplayOrder.Remove(card);
             Destroy(toRemove.gameObject);
+
+            RefanHumanHand();
+        }
+
+        /// <summary>
+        /// Recalculates fan positions for all remaining CardViews and updates
+        /// their base positions so they animate smoothly to the new layout.
+        /// </summary>
+        /// <summary>
+        /// Applies trump highlighting to all current CardViews based on _trump.
+        /// Call after trump is declared and after each hand rebuild.
+        /// </summary>
+        private void ApplyTrumpHighlights()
+        {
+            foreach (CardView cv in _humanCardViews)
+            {
+                if (cv == null) continue;
+                bool isTrump = _trump.HasValue && cv.Card.Suit == _trump.Value;
+                cv.SetTrump(isTrump);
+            }
+        }
+
+        private void RefanHumanHand()        {
+            int count = _humanCardViews.Count;
+            if (count == 0) return;
+
+            float halfAngle = FanAngleForCount(count) * 0.5f;
+            float angleStep = count > 1 ? FanAngleForCount(count) / (count - 1) : 0f;
+
+            for (int i = 0; i < count; i++)
+            {
+                CardView cv = _humanCardViews[i];
+                if (cv == null) continue;
+
+                float angleDeg = count > 1 ? -halfAngle + i * angleStep : 0f;
+                float angleRad = angleDeg * Mathf.Deg2Rad;
+
+                float x = _fanRadius * Mathf.Sin(angleRad);
+                float y = -_fanRadius + _fanRadius * Mathf.Cos(angleRad) + _fanYOffset;
+
+                cv.SetBasePosition(new Vector2(x, y));
+                cv.SetBaseRotation(angleDeg);
+
+                // Left cards render under right cards — sibling index = position in list.
+                cv.transform.SetSiblingIndex(i);
+            }
         }
 
         private void RemoveAICardBack()
@@ -681,7 +765,87 @@ namespace CruceChaos.Unity
 
         public void OnMainMenuClicked() => SceneManager.LoadScene(_mainMenuScene);
 
+        /// <summary>
+        /// Sorts the hand display by suit (Green → Bell → Red → Acorn) then by
+        /// strength descending within each suit (Ace first, Nine last).
+
+        /// <summary>Toggles auto-sort on/off and updates the highlight.</summary>
+        public void OnAutoSortToggleClicked()
+        {
+            _autoSort = !_autoSort;
+            RefreshAutoSortButton();
+            if (_autoSort)
+            {
+                ApplyAutoSort();
+                RebuildHumanHand();
+                ApplyTrumpHighlights();
+            }
+        }
+
+        /// <summary>
+        /// Shuffles the hand display randomly.
+        /// Called by the Shuffle button in the scene.
+        /// </summary>
+        public void OnShuffleHandClicked()
+        {
+            System.Random rng = new System.Random();
+            for (int i = _handDisplayOrder.Count - 1; i > 0; i--)
+            {
+                int j = rng.Next(i + 1);
+                Card tmp = _handDisplayOrder[i];
+                _handDisplayOrder[i] = _handDisplayOrder[j];
+                _handDisplayOrder[j] = tmp;
+            }
+            RebuildHumanHand();
+            ApplyTrumpHighlights();
+        }
+
+        /// <summary>Suit display order: Green=0, Bell=1, Red=2, Acorn=3.</summary>
+        private static int SuitSortOrder(Suit suit)
+        {
+            switch (suit)
+            {
+                case Suit.Green: return 0;
+                case Suit.Bell:  return 1;
+                case Suit.Red:   return 2;
+                case Suit.Acorn: return 3;
+                default:         return 4;
+            }
+        }
+
         // ── Helpers ───────────────────────────────────────────────────────────
+
+        /// <summary>Applies sort if auto-sort is on. Call after any hand change.</summary>
+        private void ApplyAutoSort()
+        {
+            if (!_autoSort) return;
+            _handDisplayOrder.Sort((a, b) =>
+            {
+                int suitA = SuitSortOrder(a.Suit);
+                int suitB = SuitSortOrder(b.Suit);
+                if (suitA != suitB) return suitA.CompareTo(suitB);
+                return b.Strength.CompareTo(a.Strength);
+            });
+        }
+
+        /// <summary>Updates the auto-sort button's highlight to reflect current state.</summary>
+        private void RefreshAutoSortButton()
+        {
+            if (_autoSortHighlight != null)
+                _autoSortHighlight.color = _autoSort
+                    ? new Color(1f, 0.85f, 0f, 0.45f)  // same gold as trump tint
+                    : Color.clear;
+        }
+
+        /// <summary>
+        /// Returns the actual total fan angle for a given card count.
+        /// Scales per-card but never exceeds _fanMaxAngle.
+        /// </summary>
+        private float FanAngleForCount(int count)
+        {
+            if (count <= 1) return 0f;
+            return Mathf.Min(_fanAnglePerCard * (count - 1), _fanMaxAngle);
+        }
 
         private static string SuitDisplayName(Suit? suit)
         {

@@ -37,6 +37,7 @@ namespace CruceChaos.Unity
         [SerializeField] private Color _hoverTint    = new Color(1f, 1f, 0.7f, 0.5f);
         [SerializeField] private Color _selectedTint = new Color(0.4f, 0.9f, 0.4f, 0.5f);
         [SerializeField] private Color _illegalTint  = new Color(0.3f, 0.3f, 0.3f, 0.5f);
+        [SerializeField] private Color _trumpTint    = new Color(1f, 0.85f, 0f, 0.45f); // gold
 
         [Header("Animation")]
         [SerializeField] private float _hoverLiftPx    = 20f;
@@ -58,9 +59,11 @@ namespace CruceChaos.Unity
         private RectTransform _rect;
         private Vector2       _basePosition;
         private Vector2       _targetPosition;
+        private float         _baseRotationDeg;
         private bool          _isLegal    = true;
         private bool          _isSelected = false;
         private bool          _isHovered  = false;
+        private bool          _isTrump    = false;
 
         // ---- Unity lifecycle -------------------------------------------------
 
@@ -87,12 +90,14 @@ namespace CruceChaos.Unity
         /// <summary>
         /// Must be called immediately after Instantiate by the GameManager.
         /// </summary>
-        public void Initialise(Card card, Sprite sprite, Vector2 basePosition)
+        public void Initialise(Card card, Sprite sprite, Vector2 basePosition, float baseRotationDeg = 0f)
         {
             Card            = card;
-            _basePosition   = basePosition;
-            _targetPosition = basePosition;
+            _basePosition      = basePosition;
+            _targetPosition    = basePosition;
+            _baseRotationDeg   = baseRotationDeg;
             _rect.anchoredPosition = basePosition;
+            _rect.localRotation    = Quaternion.Euler(0f, 0f, -baseRotationDeg);
 
             if (_faceImage != null)
                 _faceImage.sprite = sprite;
@@ -108,6 +113,26 @@ namespace CruceChaos.Unity
             _basePosition = pos;
             if (!_isSelected && !_isHovered)
                 _targetPosition = pos;
+        }
+
+        /// <summary>
+        /// Updates the resting rotation when the hand layout reflows.
+        /// </summary>
+        public void SetBaseRotation(float angleDeg)
+        {
+            _baseRotationDeg = angleDeg;
+            if (!_isSelected && !_isHovered)
+                _rect.localRotation = Quaternion.Euler(0f, 0f, -angleDeg);
+        }
+
+        /// <summary>
+        /// Marks this card as a trump card — shows a golden highlight underneath
+        /// the normal state colours so it's always visually distinct.
+        /// </summary>
+        public void SetTrump(bool isTrump)
+        {
+            _isTrump = isTrump;
+            RefreshVisuals();
         }
 
         /// <summary>
@@ -166,16 +191,23 @@ namespace CruceChaos.Unity
                 _highlightOverlay.color = _selectedTint;
             else if (_isHovered)
                 _highlightOverlay.color = _hoverTint;
+            else if (_isTrump)
+                _highlightOverlay.color = _trumpTint;
             else
                 _highlightOverlay.color = Color.clear;
         }
 
         private void RecalcTargetPosition()
         {
+            // Lift direction is along the card's local up axis (perpendicular to
+            // the fan arc), so the card slides toward the player's hand centre.
+            float rad = _baseRotationDeg * Mathf.Deg2Rad;
+            Vector2 liftDir = new Vector2(-Mathf.Sin(rad), Mathf.Cos(rad));
+
             if (_isSelected)
-                _targetPosition = _basePosition + Vector2.up * _selectedLiftPx;
+                _targetPosition = _basePosition + liftDir * _selectedLiftPx;
             else if (_isHovered)
-                _targetPosition = _basePosition + Vector2.up * _hoverLiftPx;
+                _targetPosition = _basePosition + liftDir * _hoverLiftPx;
             else
                 _targetPosition = _basePosition;
         }

@@ -117,7 +117,7 @@ namespace CruceChaos.Unity
                 int bidderTotal = humanWonBid ? humanTotal : aiTotal;
                 int bidderVP    = bidderTotal / 33;
                 bool made       = bidderVP >= bid;
-                string outcome  = made ? "✓ made" : "✗ missed";
+                string outcome  = made ? "made" : "missed";
                 bidLine = $"Bid: {bidder} bid {bid} — {outcome} ({bidderVP} VP earned)";
             }
 
