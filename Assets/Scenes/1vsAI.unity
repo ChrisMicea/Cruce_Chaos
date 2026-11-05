@@ -4984,7 +4984,8 @@ MonoBehaviour:
   _spriteRegistry: {fileID: 11400000, guid: 3ae999350d5e2b5079f110b11ceec42d, type: 2}
   _cardPrefab: {fileID: 4361170403623824481, guid: eab82ca2603463038a80fef2fd1b9c26, type: 3}
   _humanHandArea: {fileID: 988229562}
-  _aiHandArea: {fileID: 1022572262}
+  _opponentHandAreas:
+  - {fileID: 1022572262}
   _trickAreaView: {fileID: 1982506523}
   _scoreHUD: {fileID: 1784091847}
   _humanController: {fileID: 1442495989}
@@ -5003,6 +5004,7 @@ MonoBehaviour:
   _autoSortHighlight: {fileID: 333139761}
   _matchManager: {fileID: 1442495988}
   _gameLogger: {fileID: 0}
+  _keyboardInput: {fileID: 0}
   _mainMenuScene: Main Menu
 --- !u!4 &1442495991
 Transform:

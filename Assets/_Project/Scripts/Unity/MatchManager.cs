@@ -34,6 +34,28 @@ namespace CruceChaos.Unity
         private int _humanMatchScore;
         private int _aiMatchScore;
 
+        /// <summary>
+        /// Whether this match is team play (2v2) rather than individual (1v1).
+        /// Set by <c>GameManager</c> at startup. Only affects the HUD wording:
+        /// individual play keeps the familiar "You" / "AI" labels, team play
+        /// shows "Your Team" / "Opponents". The scoring itself is unchanged —
+        /// the "human" side is simply the human's TEAM in 2v2.
+        /// </summary>
+        private bool _isTeamPlay;
+
+        /// <summary>
+        /// Tell the HUD whether to use team wording. Call once before the first
+        /// round. Safe to call with false (the default) for 1v1.
+        /// </summary>
+        public void SetTeamPlay(bool isTeamPlay)
+        {
+            _isTeamPlay = isTeamPlay;
+            RefreshLabels();
+        }
+
+        private string MyLabel  => _isTeamPlay ? "Your Team" : "You";
+        private string OppLabel => _isTeamPlay ? "Opponents" : "AI";
+
         /// <summary>True after the match-over condition is reached.</summary>
         public bool IsMatchOver { get; private set; }
 
@@ -140,9 +162,9 @@ namespace CruceChaos.Unity
         private void RefreshLabels()
         {
             if (_humanMatchScoreLabel != null)
-                _humanMatchScoreLabel.text = $"You: {_humanMatchScore}";
+                _humanMatchScoreLabel.text = $"{MyLabel}: {_humanMatchScore}";
             if (_aiMatchScoreLabel != null)
-                _aiMatchScoreLabel.text = $"AI: {_aiMatchScore}";
+                _aiMatchScoreLabel.text = $"{OppLabel}: {_aiMatchScore}";
         }
 
         private void ShowMatchOver()
@@ -153,9 +175,11 @@ namespace CruceChaos.Unity
             if (_matchOverLabel != null)
             {
                 bool humanWins = _humanMatchScore > _aiMatchScore;
-                _matchOverLabel.text = humanWins
-                    ? $"You win the match!\n{_humanMatchScore} – {_aiMatchScore}"
-                    : $"AI wins the match!\n{_humanMatchScore} – {_aiMatchScore}";
+                string winner  = humanWins
+                    ? (_isTeamPlay ? "Your team wins" : "You win")
+                    : (_isTeamPlay ? "Opponents win"  : "AI wins");
+                _matchOverLabel.text =
+                    $"{winner} the match!\n{_humanMatchScore} – {_aiMatchScore}";
             }
         }
     }

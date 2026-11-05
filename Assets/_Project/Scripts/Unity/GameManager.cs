@@ -37,7 +37,17 @@ namespace CruceChaos.Unity
 
         [Header("Scene References")]
         [SerializeField] private RectTransform      _humanHandArea;
-        [SerializeField] private RectTransform      _aiHandArea;
+
+        [Tooltip("Face-down hand areas for the non-human seats, in seat order: " +
+                 "element 0 = seat 1, element 1 = seat 2, element 2 = seat 3. " +
+                 "Length must be PlayerCount-1 (one for 1v1, three for 2v2). " +
+                 "Clockwise screen layout: seat 1 = LEFT, seat 2 = TOP, seat 3 = RIGHT.")]
+        [SerializeField] private RectTransform[]    _opponentHandAreas;
+
+        [Tooltip("Centre-screen area where the revealed leftover cards appear " +
+                 "during the draft (\"surprises\") phase. Only needed for the 2v2 " +
+                 "draft variant; leave unassigned for 1v1 / classic 2v2.")]
+        [SerializeField] private RectTransform      _draftRevealArea;
         [SerializeField] private TrickAreaView      _trickAreaView;
         [SerializeField] private ScoreHUD           _scoreHUD;
         [SerializeField] private HumanPlayerController _humanController;
@@ -89,14 +99,21 @@ namespace CruceChaos.Unity
 
         // ── Runtime state ─────────────────────────────────────────────────────
 
-        private Player _humanPlayer;
-        private Player _aiPlayer;
-        private GreedyHeuristicController _aiController;
+        // Seat model: seat 0 is ALWAYS the human; seats 1..N-1 are AI.
+        // These arrays are sized by MatchConfig.PlayerCount at round start, so
+        // the same code drives 1v1 (2 seats) and 2v2 (4 seats).
+        private Player[]            _players;
+        private IPlayerController[] _controllers;
+        private int                 _playerCount;
+
+        // Convenience accessors for seat 0 (the human) — the UI only ever drives
+        // this seat directly, so keeping named getters avoids churn in the many
+        // places that touch the human's participant/views.
+        private RoundParticipant _humanParticipant => _participants != null ? _participants[0] : null;
 
         // Per-round
         private MatchConfig         _config;
-        private RoundParticipant    _humanParticipant;
-        private RoundParticipant    _aiParticipant;
+        private RoundParticipant[]  _participants;      // one per seat
         private LegalMoveEvaluator  _legalMoveEvaluator;
         private Deck                _deck;
         private Trick               _currentTrick;
@@ -110,7 +127,12 @@ namespace CruceChaos.Unity
         private int   _bidWinnerSeat; // 0 = human, 1 = AI
 
         private readonly List<CardView>   _humanCardViews  = new List<CardView>();
-        private readonly List<GameObject> _aiCardBackViews = new List<GameObject>();
+
+        // Face-down card-back views per NON-HUMAN seat, keyed by seat index
+        // (1..N-1). Each list holds one back per card still in that seat's hand,
+        // so playing a card removes a back from the correct fan.
+        private readonly Dictionary<int, List<GameObject>> _opponentCardBacks
+            = new Dictionary<int, List<GameObject>>();
         // Tracks the display order of human cards independently of Hand.Cards order.
         // Sort/shuffle reorder this list; new cards drawn are appended at the end.
         private readonly List<Card>       _handDisplayOrder = new List<Card>();
@@ -119,12 +141,50 @@ namespace CruceChaos.Unity
 
         private void Start()
         {
-            _humanPlayer  = new Player("You");
-            _aiPlayer     = new Player("AI");
-            _aiController = new GreedyHeuristicController();
+            // The mode chosen in the menu (defaults to OneVsOne if the scene was
+            // entered directly). It fixes the player count and team layout for
+            // the whole match, so players/controllers are built here, once.
+            GameMode mode = GameSelection.SelectedMode;
+            var ruleOptions = new RuleSetFactory.Options
+            {
+                MustRaiseWhenFollowing = _mustRaiseWhenFollowing
+            };
+            _config      = GameModes.DefaultConfig(mode, ruleOptions);
+            _playerCount = _config.PlayerCount;
+
+            // Tell the HUD / match tracker whether to use team wording. 1v1 keeps
+            // the familiar "You" / "AI"; 2v2 shows "Your Team" / "Opponents".
+            _scoreHUD?.SetTeamPlay(_config.IsTeamPlay);
+            _matchManager?.SetTeamPlay(_config.IsTeamPlay);
+
+            // Seat 0 = human; every other seat = its own AI controller.
+            _players     = new Player[_playerCount];
+            _controllers = new IPlayerController[_playerCount];
+            for (int seat = 0; seat < _playerCount; seat++)
+            {
+                _players[seat]     = new Player(SeatName(seat));
+                _controllers[seat] = seat == 0
+                    ? (IPlayerController)_humanController
+                    : new GreedyHeuristicController();
+            }
+
             _gameLogger?.LogMatchStart();
             _roundNumber  = 0;
             StartRound();
+        }
+
+        /// <summary>
+        /// Display name for a seat. Seat 0 is the human ("You"); the other seats
+        /// are AI. In team modes seat 2 is the human's partner (across the
+        /// table), so it is named as a teammate rather than a plain opponent.
+        /// </summary>
+        private string SeatName(int seat)
+        {
+            if (seat == 0) return "You";
+            if (_playerCount == 2) return "AI";
+            // 2v2 seat layout: 0 = you, 2 = your partner, 1 & 3 = opponents.
+            if (seat == 2) return "Partner";
+            return seat == 1 ? "Opponent A" : "Opponent B";
         }
 
         private int _roundNumber = 0;
@@ -146,24 +206,30 @@ namespace CruceChaos.Unity
                 MustRaiseWhenFollowing = _mustRaiseWhenFollowing
             };
 
-            _config = GameModes.DefaultConfig(GameMode.OneVsOne, ruleOptions);
+            // Fresh participants for this round (one per seat). _config and the
+            // player/controller arrays were built once in Start() from the
+            // selected mode and stay fixed for the whole match.
+            _participants = new RoundParticipant[_playerCount];
+            for (int seat = 0; seat < _playerCount; seat++)
+                _participants[seat] = new RoundParticipant(_players[seat]);
 
-            _humanParticipant = new RoundParticipant(_humanPlayer);
-            _aiParticipant    = new RoundParticipant(_aiPlayer);
-
-            var ruleSet = RuleSetFactory.DrawPileRuleSet(ruleOptions);
+            // Draw-pile modes (1v1) use the draw-phase ruleset; no-draw-pile
+            // modes (2v2 / draft) apply follow-suit & trump from trick one.
+            var ruleSet = _config.DealStrategy == DealStrategy.DrawPilePerTrick
+                ? RuleSetFactory.DrawPileRuleSet(ruleOptions)
+                : RuleSetFactory.NoDrawPile(ruleOptions);
             _legalMoveEvaluator = new LegalMoveEvaluator(ruleSet,
                 msg => Debug.LogWarning("[LegalMoves] " + msg));
 
             _deck = new Deck();
             _deck.Shuffle();
-            DealCards(8, _humanParticipant);
-            DealCards(8, _aiParticipant);
+            for (int seat = 0; seat < _playerCount; seat++)
+                DealCards(_config.CardsPerPlayer, _participants[seat]);
 
             _gameLogger?.LogRoundStart(_roundNumber);
             _gameLogger?.LogDeal(
                 _humanParticipant.Hand.ToString(),
-                "8 cards (face down)",
+                $"{_config.CardsPerPlayer} cards (face down) × {_playerCount - 1} opponents",
                 _deck.Count);
 
             ClearAllCardViews();
@@ -192,12 +258,23 @@ namespace CruceChaos.Unity
             // 2. Bid winner declares trump
             yield return StartCoroutine(DeclareTrumpPhase());
 
+            // 2b. Reveal-and-draft ("surprises" mode) — only when the config says
+            // so. Trump is already declared, so drafting can be trump-aware.
+            if (_config.DealStrategy == DealStrategy.RevealAndDraft)
+                yield return StartCoroutine(DraftPhase());
+
             // 3. Play all tricks
             yield return StartCoroutine(TrickLoop());
 
-            // 4. Score
-            int humanPts = _humanParticipant.CapturedPoints + _humanParticipant.MarriagePoints;
-            int aiPts    = _aiParticipant.CapturedPoints    + _aiParticipant.MarriagePoints;
+            // 4. Score — team based. "Your team" is the team containing seat 0
+            // (the human); "opponents" is every other team pooled together. In
+            // 1v1 each team is one seat, so this reduces to human vs AI exactly.
+            int humanPts = TeamTotalPoints(MyTeamIndex());
+            int aiPts    = OpponentsTotalPoints();
+
+            // Did the human's team win the bid?
+            bool myTeamWonBid = _bidWinnerSeat >= 0
+                && _config.TeamOfSeat[_bidWinnerSeat] == MyTeamIndex();
 
             if (_matchManager != null)
             {
@@ -210,12 +287,12 @@ namespace CruceChaos.Unity
                 if (_winningBid.HasValue)
                 {
                     int bid = _winningBid.Value;
-                    if (_bidWinnerSeat == 0) // human won the bid
+                    if (myTeamWonBid) // human's team won the bid
                     {
                         humanDelta = humanEarned >= bid ? humanEarned : -bid;
                         aiDelta    = aiEarned;
                     }
-                    else // AI won the bid
+                    else // opponents won the bid
                     {
                         aiDelta    = aiEarned >= bid ? aiEarned : -bid;
                         humanDelta = humanEarned;
@@ -231,16 +308,16 @@ namespace CruceChaos.Unity
                 _matchManager.ReportRoundResult(
                     humanPts, aiPts,
                     winningBid:  _winningBid,
-                    humanWonBid: _bidWinnerSeat == 0);
+                    humanWonBid: myTeamWonBid);
 
                 // Show the rich result banner.
                 _scoreHUD?.ShowResult(
-                    humanCardPts:    _humanParticipant.CapturedPoints,
-                    aiCardPts:       _aiParticipant.CapturedPoints,
+                    humanCardPts:    TeamCapturedPoints(MyTeamIndex()),
+                    aiCardPts:       OpponentsCapturedPoints(),
                     humanTotal:      humanPts,
                     aiTotal:         aiPts,
                     winningBid:      _winningBid,
-                    humanWonBid:     _bidWinnerSeat == 0,
+                    humanWonBid:     myTeamWonBid,
                     humanVPDelta:    humanDelta,
                     aiVPDelta:       aiDelta,
                     humanMatchScore: _matchManager.HumanMatchScore,
@@ -260,14 +337,62 @@ namespace CruceChaos.Unity
             }
         }
 
+        // ── Team scoring helpers ──────────────────────────────────────────────
+
+        /// <summary>The team index the human (seat 0) belongs to.</summary>
+        private int MyTeamIndex() => _config.TeamOfSeat[0];
+
+        /// <summary>Captured card points for all seats on the given team.</summary>
+        private int TeamCapturedPoints(int team)
+        {
+            int sum = 0;
+            for (int seat = 0; seat < _playerCount; seat++)
+                if (_config.TeamOfSeat[seat] == team)
+                    sum += _participants[seat].CapturedPoints;
+            return sum;
+        }
+
+        /// <summary>Captured card points for every seat NOT on the given team.</summary>
+        private int OpponentsCapturedPoints()
+        {
+            int mine = MyTeamIndex();
+            int sum = 0;
+            for (int seat = 0; seat < _playerCount; seat++)
+                if (_config.TeamOfSeat[seat] != mine)
+                    sum += _participants[seat].CapturedPoints;
+            return sum;
+        }
+
+        /// <summary>Total points (captured + marriage) for all seats on a team.</summary>
+        private int TeamTotalPoints(int team)
+        {
+            int sum = 0;
+            for (int seat = 0; seat < _playerCount; seat++)
+                if (_config.TeamOfSeat[seat] == team)
+                    sum += _participants[seat].CapturedPoints + _participants[seat].MarriagePoints;
+            return sum;
+        }
+
+        /// <summary>Total points (captured + marriage) for every opposing seat.</summary>
+        private int OpponentsTotalPoints()
+        {
+            int mine = MyTeamIndex();
+            int sum = 0;
+            for (int seat = 0; seat < _playerCount; seat++)
+                if (_config.TeamOfSeat[seat] != mine)
+                    sum += _participants[seat].CapturedPoints + _participants[seat].MarriagePoints;
+            return sum;
+        }
+
         // ── Bidding phase ─────────────────────────────────────────────────────
 
         private IEnumerator BiddingPhase()
         {
             int highBid      = 0;
             int highSeat     = -1;
-            bool[] active    = new bool[] { true, true };
-            int activeCount  = 2;
+            bool[] active    = new bool[_playerCount];
+            for (int s = 0; s < _playerCount; s++) active[s] = true;
+            int activeCount  = _playerCount;
             int lastPasser   = 0;
 
             int seat = 0; // human bids first
@@ -294,7 +419,7 @@ namespace CruceChaos.Unity
                     else // AI
                     {
                         yield return new WaitForSeconds(_aiThinkDelay * 0.5f);
-                        bid = _aiController.PlaceBid(_aiParticipant, ctx);
+                        bid = _controllers[seat].PlaceBid(_participants[seat], ctx);
                     }
 
                     bool valid = !bid.IsPass
@@ -305,39 +430,39 @@ namespace CruceChaos.Unity
                     {
                         highBid  = bid.Value;
                         highSeat = seat;
-                        _scoreHUD?.ShowBidInfo($"{(seat == 0 ? "You" : "AI")} bid {highBid}");
-                        _gameLogger?.LogBid(seat == 0 ? "You" : "AI", highBid);
+                        _scoreHUD?.ShowBidInfo($"{SeatName(seat)} bid {highBid}");
+                        _gameLogger?.LogBid(SeatName(seat), highBid);
                     }
                     else
                     {
                         active[seat] = false;
                         activeCount--;
                         lastPasser   = seat;
-                        _scoreHUD?.ShowBidInfo($"{(seat == 0 ? "You" : "AI")} passed");
-                        _gameLogger?.LogBid(seat == 0 ? "You" : "AI", null);
+                        _scoreHUD?.ShowBidInfo($"{SeatName(seat)} passed");
+                        _gameLogger?.LogBid(SeatName(seat), null);
                     }
                 }
 
                 if (activeCount == 0) break;
-                seat = (seat + 1) % 2;
+                seat = (seat + 1) % _playerCount;
             }
 
             if (highSeat < 0)
             {
                 highSeat = lastPasser;
                 highBid  = 1;
-                _scoreHUD?.ShowBidInfo($"{(highSeat == 0 ? "You" : "AI")} forced to bid 1");
-                _gameLogger?.LogForcedBid(highSeat == 0 ? "You" : "AI");
+                _scoreHUD?.ShowBidInfo($"{SeatName(highSeat)} forced to bid 1");
+                _gameLogger?.LogForcedBid(SeatName(highSeat));
             }
 
             _winningBid    = highBid;
             _bidWinnerSeat = highSeat;
             _leaderIndex   = highSeat;
 
-            string bidWinnerName = highSeat == 0 ? "You" : "AI";
+            string bidWinnerName = SeatName(highSeat);
             _scoreHUD?.ShowPersistentInfo($"{bidWinnerName} won the bid at {highBid}");
             _gameLogger?.LogBidWinner(bidWinnerName, highBid);
-            Debug.Log($"[Cruce] Bid won by {(highSeat == 0 ? "Human" : "AI")} at {highBid}");
+            Debug.Log($"[Cruce] Bid won by {bidWinnerName} (seat {highSeat}) at {highBid}");
             yield return new WaitForSeconds(1f);
         }
 
@@ -355,33 +480,176 @@ namespace CruceChaos.Unity
                 _trumpPickerPanel?.Hide();
                 _trump = chosen;
             }
-            else // AI declares
+            else // AI (any non-human seat) declares
             {
                 yield return new WaitForSeconds(_aiThinkDelay * 0.5f);
-                _trump = _aiController.DeclareTrump(_aiParticipant);
+                _trump = _controllers[_bidWinnerSeat].DeclareTrump(_participants[_bidWinnerSeat]);
             }
 
             string suitName = SuitDisplayName(_trump);
-            string declarer = _bidWinnerSeat == 0 ? "You declare" : "AI declares";
+            string declarer = _bidWinnerSeat == 0
+                ? "You declare"
+                : $"{SeatName(_bidWinnerSeat)} declares";
             _scoreHUD?.ShowPersistentInfo($"{declarer} trump: {suitName}");
             _scoreHUD?.SetTrump(_trump);
             _trickAreaView?.SetTrump(_trump);
             ApplyTrumpHighlights();
-            _gameLogger?.LogTrumpDeclared(_bidWinnerSeat == 0 ? "You" : "AI", suitName);
+            _gameLogger?.LogTrumpDeclared(SeatName(_bidWinnerSeat), suitName);
             Debug.Log($"[Cruce] Trump declared: {_trump}");
             yield return new WaitForSeconds(1.5f);
             _scoreHUD?.ClearPersistentInfo();
+        }
+
+        // ── Draft phase (reveal-and-draft / "surprises") ──────────────────────
+
+        // Clickable CardViews for the revealed leftover, kept so they can be
+        // cleared when the draft ends.
+        private readonly List<CardView> _draftCardViews = new List<CardView>();
+
+        /// <summary>
+        /// Reveals the leftover cards and lets each seat draft one — bid winner
+        /// first, then clockwise — mirroring RoundEngine.RunDraftIfNeeded. The
+        /// human picks by clicking a revealed card; AI seats use their
+        /// controller. Trump is already declared, so picks can be trump-aware.
+        /// </summary>
+        private IEnumerator DraftPhase()
+        {
+            // Reveal everything left in the deck (public information). For
+            // RevealAndDraft the leftover count equals the player count, so each
+            // seat drafts exactly one.
+            var available = new List<Card>(_deck.Draw(_deck.Count));
+            Debug.Log($"[Cruce] Draft reveal: {string.Join(", ", available)}");
+
+            _scoreHUD?.ShowPersistentInfo("Draft: pick one of the revealed cards");
+            BuildDraftReveal(available);
+            yield return new WaitForSeconds(0.5f);
+
+            for (int i = 0; i < _playerCount && available.Count > 0; i++)
+            {
+                int seat = (_bidWinnerSeat + i) % _playerCount;
+                RoundParticipant p = _participants[seat];
+                Card picked;
+
+                if (seat == 0) // human picks via the revealed CardViews
+                {
+                    HighlightDraftChoices(true);
+                    bool done = false;
+                    Card chosen = default;
+                    _humanController.BeginDraft(available, c => { chosen = c; done = true; });
+                    yield return new WaitUntil(() => done);
+                    HighlightDraftChoices(false);
+                    picked = chosen;
+                }
+                else // AI picks via its controller
+                {
+                    yield return new WaitForSeconds(_aiThinkDelay * 0.5f);
+                    picked = _controllers[seat].ChooseDraftCard(p, available, _trump.Value);
+                }
+
+                // Defensive: if a controller returns a card not on offer, take
+                // the first available instead (same guard as RoundEngine).
+                if (!available.Contains(picked))
+                    picked = available[0];
+
+                available.Remove(picked);
+                p.Hand.Add(picked);
+                RemoveDraftRevealCard(picked);
+
+                if (seat == 0)
+                {
+                    // Track and show the human's new card.
+                    _handDisplayOrder.Add(picked);
+                    ApplyAutoSort();
+                    RebuildHumanHand();
+                    ApplyTrumpHighlights();
+                }
+                else
+                {
+                    // Refresh that opponent's face-down fan (one more card).
+                    RebuildAIHand();
+                }
+
+                Debug.Log($"[Cruce] {SeatName(seat)} drafts {picked}");
+                yield return new WaitForSeconds(0.4f);
+            }
+
+            ClearDraftReveal();
+            _scoreHUD?.ClearPersistentInfo();
+            yield return new WaitForSeconds(0.3f);
+        }
+
+        /// <summary>Spawns a clickable face-up CardView per revealed card.</summary>
+        private void BuildDraftReveal(IReadOnlyList<Card> cards)
+        {
+            ClearDraftReveal();
+            if (_draftRevealArea == null || _cardPrefab == null) return;
+
+            int count = cards.Count;
+            float spacing = 140f;
+            float startX  = -(count - 1) * spacing * 0.5f;
+
+            for (int i = 0; i < count; i++)
+            {
+                GameObject go = Instantiate(_cardPrefab, _draftRevealArea);
+                CardView cv   = go.GetComponent<CardView>();
+                if (cv == null) continue;
+
+                Card card     = cards[i];
+                Sprite sprite = _spriteRegistry != null ? _spriteRegistry.GetSprite(card) : null;
+                cv.Initialise(card, sprite, new Vector2(startX + i * spacing, 0f));
+                cv.SetLegal(false);                 // not clickable until it's the human's turn
+                cv.OnCardClicked += OnDraftCardClicked;
+                _draftCardViews.Add(cv);
+            }
+        }
+
+        /// <summary>Enables/disables clicking on the revealed draft cards.</summary>
+        private void HighlightDraftChoices(bool clickable)
+        {
+            foreach (CardView cv in _draftCardViews)
+                if (cv != null) cv.SetLegal(clickable);
+        }
+
+        /// <summary>Routes a click on a revealed card to the human controller.</summary>
+        private void OnDraftCardClicked(Card card) => _humanController.SubmitDraft(card);
+
+        /// <summary>Removes the drafted card's view from the reveal row.</summary>
+        private void RemoveDraftRevealCard(Card card)
+        {
+            CardView toRemove = null;
+            foreach (CardView cv in _draftCardViews)
+                if (cv != null && cv.Card == card) { toRemove = cv; break; }
+            if (toRemove == null) return;
+
+            _draftCardViews.Remove(toRemove);
+            Destroy(toRemove.gameObject);
+        }
+
+        private void ClearDraftReveal()
+        {
+            foreach (CardView cv in _draftCardViews)
+                if (cv != null) Destroy(cv.gameObject);
+            _draftCardViews.Clear();
         }
 
         // ── Trick loop ────────────────────────────────────────────────────────
 
         private IEnumerator TrickLoop()
         {
-            while (!_humanParticipant.Hand.IsEmpty || !_aiParticipant.Hand.IsEmpty)
+            while (AnyHandNonEmpty())
             {
                 _trickCount++;
                 yield return StartCoroutine(PlayOneTrick());
             }
+        }
+
+        /// <summary>True while at least one seat still holds a card.</summary>
+        private bool AnyHandNonEmpty()
+        {
+            for (int seat = 0; seat < _playerCount; seat++)
+                if (!_participants[seat].Hand.IsEmpty)
+                    return true;
+            return false;
         }
 
         private IEnumerator PlayOneTrick()
@@ -391,12 +659,11 @@ namespace CruceChaos.Unity
             _currentTrick.SetDrawPileCount(_deck.Count);
             _trickAreaView?.ClearTrick();
 
-            string leaderName = _leaderIndex == 0 ? "You" : "AI";
-            _gameLogger?.LogTrickStart(_trickCount, leaderName);
+            _gameLogger?.LogTrickStart(_trickCount, SeatName(_leaderIndex));
 
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < _playerCount; i++)
             {
-                int seat    = (_leaderIndex + i) % 2;
+                int seat    = (_leaderIndex + i) % _playerCount;
                 bool isHuman = (seat == 0);
                 bool isLeading = (i == 0);
                 bool isOpeningLead = _firstPlayOfRound && isLeading;
@@ -404,7 +671,7 @@ namespace CruceChaos.Unity
                 if (isHuman)
                     yield return StartCoroutine(HumanPlays(isLeading, isOpeningLead));
                 else
-                    yield return StartCoroutine(AIPlays(isLeading, isOpeningLead));
+                    yield return StartCoroutine(AIPlays(seat, isLeading, isOpeningLead));
             }
 
             yield return new WaitForSeconds(_trickResolvePause);
@@ -470,52 +737,61 @@ namespace CruceChaos.Unity
             _humanController.CancelTurn();
 
             _gameLogger?.LogCardPlayed("You", chosen.ToString());
-            PlayCard(_humanParticipant, chosen, isHuman: true);
+            PlayCard(0, _humanParticipant, chosen);
             _firstPlayOfRound = false;
         }
 
         // ── AI turn ───────────────────────────────────────────────────────────
 
-        private IEnumerator AIPlays(bool isLeading, bool isOpeningLead)
+        private IEnumerator AIPlays(int seat, bool isLeading, bool isOpeningLead)
         {
             yield return new WaitForSeconds(_aiThinkDelay);
+
+            RoundParticipant part = _participants[seat];
+            IPlayerController ai   = _controllers[seat];
 
             // Marriage announcement
             Suit? announcedSuit = null;
             if (isLeading)
             {
-                var marriages = new List<Suit>(_aiParticipant.Hand.MarriageSuits());
+                var marriages = new List<Suit>(part.Hand.MarriageSuits());
                 if (isOpeningLead)
                     marriages.RemoveAll(s => !(_trump.HasValue && s == _trump.Value));
 
                 if (marriages.Count > 0)
                 {
-                    announcedSuit = _aiController.AnnounceMarriage(_aiParticipant, marriages, _trump);
+                    announcedSuit = ai.AnnounceMarriage(part, marriages, _trump);
                     if (announcedSuit.HasValue)
                     {
                         int bonus = _trump.HasValue && announcedSuit.Value == _trump.Value ? 40 : 20;
-                        _aiParticipant.AddMarriagePoints(bonus);
+                        part.AddMarriagePoints(bonus);
                         _scoreHUD?.ShowMarriageBonus(bonus);
-                        _gameLogger?.LogMarriage("AI", announcedSuit.Value.ToString(), bonus);
-                        Debug.Log($"[Cruce] AI announces marriage in {announcedSuit.Value} (+{bonus})");
+                        _gameLogger?.LogMarriage(SeatName(seat), announcedSuit.Value.ToString(), bonus);
+                        Debug.Log($"[Cruce] {SeatName(seat)} announces marriage in {announcedSuit.Value} (+{bonus})");
                     }
                 }
             }
 
             var context = new LegalMoveContext(
-                _aiParticipant.Hand, _currentTrick, _trump, _deck.Count,
+                part.Hand, _currentTrick, _trump, _deck.Count,
                 isOpeningLead: isOpeningLead, announcedSuit: announcedSuit);
             IReadOnlyList<Card> legal = _legalMoveEvaluator.LegalMoves(context);
 
-            Card chosen = _aiController.ChooseCard(_aiParticipant, legal, _currentTrick);
-            _gameLogger?.LogCardPlayed("AI", chosen.ToString());
-            PlayCard(_aiParticipant, chosen, isHuman: false);
+            Card chosen = ai.ChooseCard(part, legal, _currentTrick);
+            _gameLogger?.LogCardPlayed(SeatName(seat), chosen.ToString());
+            PlayCard(seat, part, chosen);
             _firstPlayOfRound = false;
         }
 
         // ── Shared card play ──────────────────────────────────────────────────
 
-        private void PlayCard(RoundParticipant participant, Card card, bool isHuman)
+        /// <summary>
+        /// Plays <paramref name="card"/> from <paramref name="seat"/> into the
+        /// current trick and updates the view: seat 0 (human) removes a face-up
+        /// CardView and refans; any other seat removes one face-down back from
+        /// that seat's own fan.
+        /// </summary>
+        private void PlayCard(int seat, RoundParticipant participant, Card card)
         {
             participant.Hand.Remove(card);
             _currentTrick.Add(participant, card);
@@ -523,10 +799,10 @@ namespace CruceChaos.Unity
             Sprite sprite = _spriteRegistry != null ? _spriteRegistry.GetSprite(card) : null;
             _trickAreaView?.AddCardToPile(sprite);
 
-            if (isHuman)
+            if (seat == 0)
                 RemoveCardViewFromHand(card);
             else
-                RemoveAICardBack();
+                RemoveOpponentCardBack(seat);
 
             _scoreHUD?.SetDeckCount(_deck.Count);
         }
@@ -539,33 +815,40 @@ namespace CruceChaos.Unity
             int pts = _currentTrick.PointValue;
             winner.AddCapturedPoints(pts);
 
-            bool humanWon = (winner == _humanParticipant);
-            _leaderIndex  = humanWon ? 0 : 1;
+            // Next leader is the winning seat (0..N-1), not just human/AI.
+            _leaderIndex = Array.IndexOf(_participants, winner);
 
-            _trickAreaView?.FlashWinner(humanWon);
-            _scoreHUD?.SetHumanPoints(_humanParticipant.CapturedPoints + _humanParticipant.MarriagePoints);
-            _scoreHUD?.SetAIPoints(_aiParticipant.CapturedPoints + _aiParticipant.MarriagePoints);
+            // "My side won" = the winning seat is on the human's team. Drives the
+            // positive/negative winner flash and keeps the HUD meaningful before
+            // the team-HUD relabel in a later step.
+            bool myTeamWon = _config.TeamOfSeat[_leaderIndex] == MyTeamIndex();
+            _trickAreaView?.FlashWinner(myTeamWon);
+            _scoreHUD?.SetHumanPoints(TeamTotalPoints(MyTeamIndex()));
+            _scoreHUD?.SetAIPoints(OpponentsTotalPoints());
 
             Debug.Log($"[Cruce] Trick {_trickCount}: {winner.Player.Name} wins {pts} pts.");
         }
 
         private void DrawFromPile()
         {
-            if (_deck.Count == 0) return;
+            // Only draw-pile modes (1v1) refill hands between tricks. DealAll /
+            // RevealAndDraft (2v2 / draft) have no draw pile, so this is a no-op
+            // for them — mirrors RoundEngine.DrawFromPile.
+            if (_config.DealStrategy != DealStrategy.DrawPilePerTrick || _deck.Count == 0)
+                return;
 
-            RoundParticipant first  = _leaderIndex == 0 ? _humanParticipant : _aiParticipant;
-            RoundParticipant second = _leaderIndex == 0 ? _aiParticipant    : _humanParticipant;
+            // Every seat draws one, starting with the trick winner (now leader),
+            // going clockwise. Winner draws first.
+            for (int i = 0; i < _playerCount && _deck.Count > 0; i++)
+            {
+                int seat = (_leaderIndex + i) % _playerCount;
+                Card drawn = _deck.Draw();
+                _participants[seat].Hand.Add(drawn);
 
-            Card firstCard  = _deck.Draw();
-            Card secondCard = _deck.Draw();
-            first.Hand.Add(firstCard);
-            second.Hand.Add(secondCard);
-
-            // Append the new human card at the end of the display order.
-            if (first == _humanParticipant)
-                _handDisplayOrder.Add(firstCard);
-            else
-                _handDisplayOrder.Add(secondCard);
+                // Track the human's new card at the end of the display order.
+                if (seat == 0)
+                    _handDisplayOrder.Add(drawn);
+            }
 
             _scoreHUD?.SetDeckCount(_deck.Count);
             ApplyAutoSort();
@@ -641,24 +924,66 @@ namespace CruceChaos.Unity
             _keyboardInput?.SetCardViews(_humanCardViews);
         }
 
+        /// <summary>
+        /// Rebuilds the face-down card-back fans for every non-human seat, each
+        /// into its own area in <see cref="_opponentHandAreas"/> (indexed by
+        /// non-human seat order: element 0 = seat 1, element 1 = seat 2, ...).
+        ///
+        /// All seats use the same downward-arc fan formula; a per-seat base
+        /// rotation then spins the whole fan so it faces the table centre —
+        /// 0° for the TOP seat (fan hangs down), +90° for the LEFT seat, -90°
+        /// for the RIGHT seat. For 1v1 there is a single opponent area and no
+        /// extra rotation, so the fan is identical to the original.
+        /// </summary>
         private void RebuildAIHand()
         {
-            foreach (GameObject go in _aiCardBackViews)
-                if (go != null) Destroy(go);
-            _aiCardBackViews.Clear();
+            // Destroy every existing back and clear the per-seat lists.
+            foreach (var kv in _opponentCardBacks)
+                foreach (GameObject go in kv.Value)
+                    if (go != null) Destroy(go);
+            _opponentCardBacks.Clear();
 
-            if (_aiHandArea == null || _cardPrefab == null) return;
+            if (_cardPrefab == null || _participants == null) return;
 
-            int count = _aiParticipant.Hand.Count;
+            // One area per non-human seat, in seat order (seat 1 → element 0).
+            for (int seat = 1; seat < _playerCount; seat++)
+            {
+                int areaIndex = seat - 1;
+                RectTransform area = (_opponentHandAreas != null
+                                      && areaIndex < _opponentHandAreas.Length)
+                    ? _opponentHandAreas[areaIndex]
+                    : null;
+                if (area == null) continue;
+
+                var backs = new List<GameObject>();
+                _opponentCardBacks[seat] = backs;
+
+                BuildCardBackFan(seat, area, backs);
+            }
+        }
+
+        /// <summary>
+        /// Lays out one seat's face-down fan into <paramref name="area"/> and
+        /// records the created backs in <paramref name="backs"/>.
+        /// </summary>
+        private void BuildCardBackFan(int seat, RectTransform area, List<GameObject> backs)
+        {
+            int count = _participants[seat].Hand.Count;
             if (count == 0) return;
 
             float halfAngle = FanAngleForCount(count) * 0.35f;
             float angleStep = count > 1 ? (halfAngle * 2f) / (count - 1) : 0f;
             float radius    = _fanRadius * 0.5f;
 
+            // Spin the whole fan so it faces the table centre.
+            float seatRotation = SeatFanRotation(seat);
+            float seatRad      = seatRotation * Mathf.Deg2Rad;
+            float cosR = Mathf.Cos(seatRad);
+            float sinR = Mathf.Sin(seatRad);
+
             for (int i = 0; i < count; i++)
             {
-                GameObject go = Instantiate(_cardPrefab, _aiHandArea);
+                GameObject go = Instantiate(_cardPrefab, area);
 
                 CardView cv = go.GetComponent<CardView>();
                 if (cv != null) cv.enabled = false;
@@ -675,20 +1000,44 @@ namespace CruceChaos.Unity
                     float angleDeg = count > 1 ? -halfAngle + i * angleStep : 0f;
                     float angleRad = angleDeg * Mathf.Deg2Rad;
 
-                    // Same formula as human fan but circle centre is ABOVE the pivot.
-                    // Human: centre at (0, -radius) → cards arc upward.
-                    // AI:    centre at (0, +radius) → cards arc downward (outward).
+                    // Base fan (same as the original single-opponent fan): circle
+                    // centre ABOVE the pivot, so cards arc downward.
                     float x =  radius * Mathf.Sin(angleRad);
                     float y =  radius - radius * Mathf.Cos(angleRad);
+                    // y positive = downward from the pivot (which sits at top).
+                    Vector2 basePos = new Vector2(x, -y - _fanYOffset * 0.3f);
 
-                    // y is positive = downward from the AIHandArea pivot (which is at top).
-                    rt.anchoredPosition = new Vector2(x, -y - _fanYOffset * 0.3f);
+                    // Rotate the whole fan (position + tilt) by the seat's angle
+                    // so left/right seats read as side hands.
+                    Vector2 pos = new Vector2(
+                        basePos.x * cosR - basePos.y * sinR,
+                        basePos.x * sinR + basePos.y * cosR);
+
+                    rt.anchoredPosition = pos;
                     rt.sizeDelta        = new Vector2(120f, 180f);
-                    // Rotate card to face downward and follow the arc tangent.
-                    rt.localRotation    = Quaternion.Euler(0f, 0f, -angleDeg);
+                    // Follow the arc tangent, then add the seat's base rotation.
+                    rt.localRotation    = Quaternion.Euler(0f, 0f, -angleDeg + seatRotation);
                 }
 
-                _aiCardBackViews.Add(go);
+                backs.Add(go);
+            }
+        }
+
+        /// <summary>
+        /// The base rotation (degrees) applied to a seat's whole card-back fan so
+        /// it faces the table centre. Clockwise screen layout:
+        /// seat 1 = LEFT (+90°), seat 2 = TOP (0°), seat 3 = RIGHT (-90°).
+        /// In 1v1 the single opponent sits across the top (0°), unchanged.
+        /// </summary>
+        private float SeatFanRotation(int seat)
+        {
+            if (_playerCount == 2) return 0f;   // 1v1: opponent across the top.
+            switch (seat)
+            {
+                case 1:  return  90f;  // left
+                case 2:  return   0f;  // top (partner)
+                case 3:  return -90f;  // right
+                default: return   0f;
             }
         }
 
@@ -750,12 +1099,19 @@ namespace CruceChaos.Unity
             }
         }
 
-        private void RemoveAICardBack()
+        /// <summary>
+        /// Removes one face-down back from the given seat's fan (the last one,
+        /// since backs are interchangeable). No-op if the seat has no backs.
+        /// </summary>
+        private void RemoveOpponentCardBack(int seat)
         {
-            if (_aiCardBackViews.Count == 0) return;
-            int last = _aiCardBackViews.Count - 1;
-            if (_aiCardBackViews[last] != null) Destroy(_aiCardBackViews[last]);
-            _aiCardBackViews.RemoveAt(last);
+            if (!_opponentCardBacks.TryGetValue(seat, out List<GameObject> backs)
+                || backs.Count == 0)
+                return;
+
+            int last = backs.Count - 1;
+            if (backs[last] != null) Destroy(backs[last]);
+            backs.RemoveAt(last);
         }
 
         private void ClearAllCardViews()
@@ -764,9 +1120,10 @@ namespace CruceChaos.Unity
                 if (cv != null) Destroy(cv.gameObject);
             _humanCardViews.Clear();
 
-            foreach (GameObject go in _aiCardBackViews)
-                if (go != null) Destroy(go);
-            _aiCardBackViews.Clear();
+            foreach (var kv in _opponentCardBacks)
+                foreach (GameObject go in kv.Value)
+                    if (go != null) Destroy(go);
+            _opponentCardBacks.Clear();
         }
 
         // ── Public button handlers ────────────────────────────────────────────

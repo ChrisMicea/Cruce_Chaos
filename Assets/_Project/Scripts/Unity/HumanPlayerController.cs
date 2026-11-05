@@ -167,11 +167,47 @@ namespace CruceChaos.Unity
         Suit? IPlayerController.AnnounceMarriage(RoundParticipant self, IReadOnlyList<Suit> available, Suit? trump)
             => throw new InvalidOperationException("Use HumanPlayerController.BeginAnnounceMarriage() instead.");
 
-        // Draft is not used in 1v1 DrawPilePerTrick — falls back to greedy pick.
+        // The IPlayerController.ChooseDraftCard entry point is never called for
+        // the human — like the other decisions, the draft goes through the
+        // Begin/Submit coroutine bridge below so the GameManager can pause for
+        // the player's click. It throws so an accidental direct call is obvious.
         Card IPlayerController.ChooseDraftCard(RoundParticipant self, IReadOnlyList<Card> available, Suit trump)
+            => throw new InvalidOperationException("Use HumanPlayerController.BeginDraft() instead.");
+
+        // ── Draft (reveal-and-draft / "surprises" mode) ───────────────────────
+
+        private Action<Card> _onDraftChosen;
+        private bool         _waitingForDraft;
+        private IReadOnlyList<Card> _draftChoices;
+
+        /// <summary>
+        /// Begins a draft pick. The GameManager reveals the available cards as
+        /// clickable CardViews and calls this; the player's click on one routes
+        /// through <see cref="SubmitDraft"/> to fire <paramref name="onDraftChosen"/>.
+        /// </summary>
+        public void BeginDraft(IReadOnlyList<Card> available, Action<Card> onDraftChosen)
         {
-            Debug.LogWarning("[HumanPlayerController] ChooseDraftCard called — not expected in 1v1 mode. Picking first available.");
-            return available[0];
+            _draftChoices    = available;
+            _onDraftChosen   = onDraftChosen;
+            _waitingForDraft = true;
+        }
+
+        /// <summary>Called when the player clicks one of the revealed draft cards.</summary>
+        public void SubmitDraft(Card card)
+        {
+            if (!_waitingForDraft) return;
+
+            // Only accept a card that is actually on offer.
+            bool offered = false;
+            if (_draftChoices != null)
+                foreach (Card c in _draftChoices) if (c == card) { offered = true; break; }
+            if (!offered) return;
+
+            _waitingForDraft = false;
+            Action<Card> cb  = _onDraftChosen;
+            _onDraftChosen   = null;
+            _draftChoices    = null;
+            cb?.Invoke(card);
         }
     }
 }

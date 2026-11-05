@@ -41,20 +41,36 @@ namespace CruceChaos.Unity
         [Tooltip("A label shown centre-screen for bid winner / trump announcements. Stays until ClearPersistentInfo() is called.")]
         [SerializeField] private TextMeshProUGUI _persistentInfoLabel;
 
+        // ---- Team-play wording ------------------------------------------------
+
+        /// <summary>
+        /// Whether to use team wording. Set by <c>GameManager</c> at startup:
+        /// 1v1 keeps "You" / "AI", 2v2 shows "Your Team" / "Opponents". The two
+        /// score slots always mean "the human's side" and "the opposing side",
+        /// so in 2v2 they carry the human's TEAM total vs the opponents' total.
+        /// </summary>
+        private bool _isTeamPlay;
+
+        /// <summary>Tell the HUD whether to use team wording. Call once at startup.</summary>
+        public void SetTeamPlay(bool isTeamPlay) => _isTeamPlay = isTeamPlay;
+
+        private string MyLabel  => _isTeamPlay ? "Your Team" : "You";
+        private string OppLabel => _isTeamPlay ? "Opponents" : "AI";
+
         // ---- Public API -------------------------------------------------------
 
-        /// <summary>Updates the human player's captured card-point total.</summary>
+        /// <summary>Updates the human side's captured card-point total.</summary>
         public void SetHumanPoints(int pts)
         {
             if (_humanPointsLabel != null)
-                _humanPointsLabel.text = $"Your Points: {pts}";
+                _humanPointsLabel.text = _isTeamPlay ? $"Your Team: {pts}" : $"Your Points: {pts}";
         }
 
-        /// <summary>Updates the AI player's captured card-point total.</summary>
+        /// <summary>Updates the opposing side's captured card-point total.</summary>
         public void SetAIPoints(int pts)
         {
             if (_aiPointsLabel != null)
-                _aiPointsLabel.text = $"AI Points: {pts}";
+                _aiPointsLabel.text = $"{OppLabel} Points: {pts}";
         }
 
         /// <summary>Updates the draw pile card count label.</summary>
@@ -106,14 +122,14 @@ namespace CruceChaos.Unity
             if (_resultLabel == null) return;
 
             // ── Line 1: card points ──────────────────────────────────────────
-            string pointsLine = $"You: {humanTotal} pts     AI: {aiTotal} pts";
+            string pointsLine = $"{MyLabel}: {humanTotal} pts     {OppLabel}: {aiTotal} pts";
 
             // ── Line 2: bid outcome ──────────────────────────────────────────
             string bidLine = "";
             if (winningBid.HasValue)
             {
                 int bid         = winningBid.Value;
-                string bidder   = humanWonBid ? "You" : "AI";
+                string bidder   = humanWonBid ? MyLabel : OppLabel;
                 int bidderTotal = humanWonBid ? humanTotal : aiTotal;
                 int bidderVP    = bidderTotal / 33;
                 bool made       = bidderVP >= bid;
@@ -124,10 +140,10 @@ namespace CruceChaos.Unity
             // ── Line 3: VP gained ────────────────────────────────────────────
             string humanDeltaStr = humanVPDelta >= 0 ? $"+{humanVPDelta}" : $"{humanVPDelta}";
             string aiDeltaStr    = aiVPDelta    >= 0 ? $"+{aiVPDelta}"    : $"{aiVPDelta}";
-            string vpLine        = $"VP:  You {humanDeltaStr}     AI {aiDeltaStr}";
+            string vpLine        = $"VP:  {MyLabel} {humanDeltaStr}     {OppLabel} {aiDeltaStr}";
 
             // ── Line 4: running match score ──────────────────────────────────
-            string standingsLine = $"Match:  You {humanMatchScore}  –  AI {aiMatchScore}";
+            string standingsLine = $"Match:  {MyLabel} {humanMatchScore}  –  {OppLabel} {aiMatchScore}";
 
             _resultLabel.text = string.Join("\n", pointsLine, bidLine, vpLine, standingsLine);
         }
@@ -139,9 +155,9 @@ namespace CruceChaos.Unity
             _resultBanner.SetActive(true);
             if (_resultLabel != null)
                 _resultLabel.text = humanPts > aiPts
-                    ? $"You win!\n{humanPts} – {aiPts}"
+                    ? $"{MyLabel} win!\n{humanPts} – {aiPts}"
                     : aiPts > humanPts
-                        ? $"AI wins!\n{humanPts} – {aiPts}"
+                        ? $"{OppLabel} win!\n{humanPts} – {aiPts}"
                         : $"Draw!\n{humanPts} – {aiPts}";
         }
 
