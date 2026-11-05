@@ -223,6 +223,13 @@ namespace CruceChaos.Unity
 
             _deck = new Deck();
             _deck.Shuffle();
+
+            // Clear the display order BEFORE dealing: DealCards repopulates it
+            // for the human's new hand, so the later ApplyAutoSort() has cards to
+            // sort. (Clearing it after the deal would wipe the new hand and the
+            // auto-sort toggle would silently stop working on fresh rounds.)
+            _handDisplayOrder.Clear();
+
             for (int seat = 0; seat < _playerCount; seat++)
                 DealCards(_config.CardsPerPlayer, _participants[seat]);
 
@@ -233,7 +240,6 @@ namespace CruceChaos.Unity
                 _deck.Count);
 
             ClearAllCardViews();
-            _handDisplayOrder.Clear();
             _trickAreaView?.ClearTrick();
             _scoreHUD?.HideResult();
             _scoreHUD?.SetTrump(null);
