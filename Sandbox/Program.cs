@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using CruceChaos.Core.Game;
 using CruceChaos.Core.Players;
 using CruceChaos.Core.Players.AI;
@@ -9,62 +11,116 @@ namespace CruceChaos.Sandbox
 {
     /// <summary>
     /// Standalone console harness for the pure-C# Core. Runs one full round of
-    /// the 2-player game (follow-suit + trump, no bidding yet) and prints the
-    /// play-by-play plus the final captured-point tallies.
+    /// a chosen game mode and prints the play-by-play plus the final
+    /// per-scoring-unit captured-point tallies.
     ///
-    /// This has no Unity dependency; run it with `dotnet run` from Sandbox/.
+    /// Usage:  dotnet run --project Sandbox -- [seed] [mode] [raise]
+    ///   seed  : integer RNG seed (default 42)
+    ///   mode  : 1v1 | 2v2 | 1v1v1 | ffa4   (default 1v1)
+    ///   raise : the literal "raise" to enable the optional must-raise rule
+    ///
+    /// No Unity dependency; run with `dotnet run` from the repo root.
     /// </summary>
     internal static class Program
     {
         private static void Main(string[] args)
         {
-            // Fixed seed => reproducible shuffle, so the output is stable run to
-            // run. Pass a seed as the first CLI arg to try a different deal.
             int seed = 42;
             if (args.Length > 0 && int.TryParse(args[0], out int parsed))
             {
                 seed = parsed;
             }
 
-            var players = new[]
-            {
-                new Player("Alice"),
-                new Player("Bob")
-            };
+            GameMode mode = ParseMode(args.Length > 1 ? args[1] : "1v1");
+            bool mustRaise = Array.IndexOf(args, "raise") >= 0;
+            bool singleRound = Array.IndexOf(args, "round") >= 0;
 
-            // Alice = baseline (first legal move), Bob = greedy heuristic, so a
-            // single round shows the two engines head to head.
-            var controllers = new IPlayerController[]
-            {
-                new FirstLegalMoveController(),
-                new GreedyHeuristicController()
-            };
-
-            // Second CLI arg "raise" turns on the optional must-raise rule, to
-            // demonstrate start-of-game rule customization.
-            bool mustRaise = args.Length > 1 && args[1] == "raise";
             var options = new RuleSetFactory.Options { MustRaiseWhenFollowing = mustRaise };
-            RuleSet ruleSet = RuleSetFactory.TwoPlayerDrawPile(options);
+            MatchConfig config = GameModes.DefaultConfig(mode, options);
 
-            Console.WriteLine($"=== Cruce Chaos — single round (seed {seed}, must-raise {(mustRaise ? "ON" : "off")}) ===\n");
+            (Player[] players, IPlayerController[] controllers) = BuildSeats(config.PlayerCount);
 
-            var engine = new RoundEngine(players, controllers, ruleSet, seed, Console.WriteLine);
-            RoundParticipant[] result = engine.Play();
+            Console.WriteLine($"=== Cruce Chaos — {mode} (seed {seed}, must-raise {(mustRaise ? "ON" : "off")}) ===\n");
+
+            if (singleRound)
+            {
+                RunSingleRound(players, controllers, config, options, seed);
+                return;
+            }
+
+            // Default: play a full match to the target score.
+            var match = new MatchEngine(players, controllers, config, seed: seed, log: Console.WriteLine);
+            MatchResult result = match.Play();
+
+            string winners = string.Join(" / ", result.Winners.Select(p => p.Name));
+            Console.WriteLine($"=== MATCH OVER — winner: {winners} (score {result.WinningScore}, target {config.TargetScore}) ===");
+        }
+
+        /// <summary>Detailed single-round inspection (per-trick log + per-player team view).</summary>
+        private static void RunSingleRound(
+            Player[] players, IPlayerController[] controllers, MatchConfig config,
+            RuleSetFactory.Options options, int seed)
+        {
+            RuleSet ruleSet = config.DealStrategy == DealStrategy.DrawPilePerTrick
+                ? RuleSetFactory.DrawPileRuleSet(options)
+                : RuleSetFactory.NoDrawPile(options);
+
+            var engine = new RoundEngine(players, controllers, config, ruleSet, seed, Console.WriteLine);
+            RoundResult result = engine.Play();
 
             Console.WriteLine("=== Round over ===");
-            int total = 0;
-            foreach (RoundParticipant p in result)
+            if (result.WinningBid.HasValue)
             {
-                Console.WriteLine($"  {p.Player.Name}: {p.CapturedPoints} points captured");
-                total += p.CapturedPoints;
+                Console.WriteLine($"  Contract: {players[result.BidWinnerSeat].Name} bid {result.WinningBid} (trump {result.Trump})");
+            }
+
+            int total = 0;
+            foreach (ScoringUnit u in result.ScoringUnits)
+            {
+                Console.WriteLine($"  {u.Label}: {u.CapturedPoints} points captured");
+                total += u.CapturedPoints;
             }
 
             Console.WriteLine($"\n  Total points distributed: {total} (should be 120)");
-
             if (total != 120)
             {
                 Console.WriteLine("  WARNING: points do not sum to 120 — something is wrong.");
             }
+        }
+
+        private static GameMode ParseMode(string s)
+        {
+            switch (s.ToLowerInvariant())
+            {
+                case "2v2": return GameMode.TwoVsTwo;
+                case "2v2draft": return GameMode.TwoVsTwoDraft;
+                case "1v1v1": return GameMode.OneVsOneVsOne;
+                case "ffa4": return GameMode.FourPlayerIndividual;
+                case "1v1":
+                default: return GameMode.OneVsOne;
+            }
+        }
+
+        /// <summary>
+        /// Build players and controllers for the given seat count. Seat 0 is the
+        /// baseline (first-legal) engine; every other seat is the greedy engine,
+        /// so the greedy AIs are measured against the dumb one.
+        /// </summary>
+        private static (Player[], IPlayerController[]) BuildSeats(int count)
+        {
+            string[] names = { "Alice", "Bob", "Cara", "Dan" };
+            var players = new Player[count];
+            var controllers = new IPlayerController[count];
+
+            for (int i = 0; i < count; i++)
+            {
+                players[i] = new Player(names[i]);
+                controllers[i] = i == 0
+                    ? new FirstLegalMoveController()
+                    : (IPlayerController)new GreedyHeuristicController();
+            }
+
+            return (players, controllers);
         }
     }
 }

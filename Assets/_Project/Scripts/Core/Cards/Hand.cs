@@ -58,13 +58,33 @@ namespace CruceChaos.Core.Cards
         public bool Remove(Card card) => _cards.Remove(card);
 
         /// <summary>
-        /// All cards of a given suit currently in the hand. Used by the
-        /// (later) follow-suit rules to decide what is legal to play.
+        /// All cards of a given suit currently in the hand. A convenience query
+        /// for UI and AI; the legality rules currently filter inline.
         /// </summary>
         public IEnumerable<Card> CardsOfSuit(Suit suit) => _cards.Where(c => c.Suit == suit);
 
         /// <summary>True if the hand holds at least one card of the suit.</summary>
         public bool HasSuit(Suit suit) => _cards.Any(c => c.Suit == suit);
+
+        /// <summary>
+        /// True if the hand holds a MARRIAGE in the given suit — both the Three
+        /// and the Four of that suit (the treiar + pătrar announcement pair).
+        /// </summary>
+        public bool HasMarriage(Suit suit) =>
+            _cards.Any(c => c.Suit == suit && c.Rank == Rank.Three) &&
+            _cards.Any(c => c.Suit == suit && c.Rank == Rank.Four);
+
+        /// <summary>The suits in which the hand currently holds a full marriage.</summary>
+        public IEnumerable<Suit> MarriageSuits()
+        {
+            foreach (Suit suit in System.Enum.GetValues(typeof(Suit)).Cast<Suit>())
+            {
+                if (HasMarriage(suit))
+                {
+                    yield return suit;
+                }
+            }
+        }
 
         public override string ToString() => string.Join(", ", _cards);
     }

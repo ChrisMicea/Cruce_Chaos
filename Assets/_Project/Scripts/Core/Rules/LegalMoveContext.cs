@@ -22,9 +22,8 @@ namespace CruceChaos.Core.Rules
         public ITrickContext Trick { get; }
 
         /// <summary>
-        /// The trump suit for this round, or null if there is no trump (either
-        /// the mode has none, or it has not been established yet). Null for the
-        /// current milestone since trump is not implemented.
+        /// The round's trump suit, declared by the bid winner before play, or
+        /// null if the mode has no trump.
         /// </summary>
         public Suit? Trump { get; }
 
@@ -34,15 +33,32 @@ namespace CruceChaos.Core.Rules
         /// </summary>
         public int DrawPileCount { get; }
 
+        /// <summary>
+        /// True only for the bid winner's very first lead of the round. Used to
+        /// enforce the "opening lead must be trump" obligation (rule a).
+        /// </summary>
+        public bool IsOpeningLead { get; }
+
+        /// <summary>
+        /// When the leading player has announced a marriage this lead, the suit
+        /// of it; otherwise null. The AnnouncedMarriageLeadRule uses this to
+        /// require the lead to be the Three or Four of the announced suit.
+        /// </summary>
+        public Suit? AnnouncedSuit { get; }
+
         /// <summary>True when the player is leading (no card led yet this trick).</summary>
         public bool IsLeading => Trick.IsEmpty;
 
-        public LegalMoveContext(Hand hand, ITrickContext trick, Suit? trump, int drawPileCount)
+        public LegalMoveContext(
+            Hand hand, ITrickContext trick, Suit? trump, int drawPileCount,
+            bool isOpeningLead = false, Suit? announcedSuit = null)
         {
             Hand = hand;
             Trick = trick;
             Trump = trump;
             DrawPileCount = drawPileCount;
+            IsOpeningLead = isOpeningLead;
+            AnnouncedSuit = announcedSuit;
         }
     }
 }

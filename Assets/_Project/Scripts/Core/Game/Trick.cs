@@ -38,9 +38,9 @@ namespace CruceChaos.Core.Game
         Suit LedSuit { get; }
 
         /// <summary>
-        /// The round's trump suit, or null if the round has no trump yet. This
-        /// is public information (established by the first card of the round),
-        /// exposed so controllers can make trump-aware decisions.
+        /// The round's trump suit, or null if the mode has no trump. Public
+        /// information (declared by the bid winner before play), exposed so
+        /// controllers can make trump-aware decisions.
         /// </summary>
         Suit? Trump { get; }
 
@@ -73,10 +73,9 @@ namespace CruceChaos.Core.Game
         public Suit LedSuit => _plays[0].Card.Suit;
 
         /// <summary>
-        /// The round's trump suit as seen by controllers. The engine keeps this
-        /// in sync via <see cref="SetTrump"/>; it is null until trump is
-        /// established (which, for the first trick of the round, happens partway
-        /// through the trick when its first card is played).
+        /// The round's trump suit as seen by controllers, set once per trick by
+        /// the engine via <see cref="SetTrump"/> (trump is declared before play,
+        /// so it is fixed for the whole round).
         /// </summary>
         public Suit? Trump { get; private set; }
 

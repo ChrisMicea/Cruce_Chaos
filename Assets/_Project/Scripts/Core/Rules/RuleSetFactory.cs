@@ -28,17 +28,21 @@ namespace CruceChaos.Core.Rules
         }
 
         /// <summary>
-        /// Rule set for the 2-player "cu carti de jos" mode: free play while the
+        /// Rule set for draw-pile ("cu carti de jos") modes: free play while the
         /// draw pile has cards, then follow-suit / trump obligations once it is
         /// empty. The draw-phase rule short-circuits the pipeline while cards
         /// remain to draw.
         /// </summary>
-        public static RuleSet TwoPlayerDrawPile(Options options)
+        public static RuleSet DrawPileRuleSet(Options options)
         {
             var set = new RuleSet()
+                // Opening-lead trump obligation comes FIRST — it must override
+                // the draw-phase "anything goes" short-circuit on that one lead.
+                .Append(new LeadTrumpOnOpeningRule())
+                .Append(new AnnouncedMarriageLeadRule())   // lead must be the announced 3/4
                 .Append(new DrawPhaseAnythingGoesRule())  // short-circuits during the draw phase
                 .Append(new FollowSuitRule())             // then normal obligations:
-                .Append(new TrumpObligationRule());       // (trump stub for now)
+                .Append(new TrumpObligationRule());
 
             AppendOptional(set, options);
             return set;
@@ -52,6 +56,8 @@ namespace CruceChaos.Core.Rules
         public static RuleSet NoDrawPile(Options options)
         {
             var set = new RuleSet()
+                .Append(new LeadTrumpOnOpeningRule())
+                .Append(new AnnouncedMarriageLeadRule())
                 .Append(new FollowSuitRule())
                 .Append(new TrumpObligationRule());
 

@@ -245,3 +245,290 @@ every round (seat 0) makes it dominant (40/10). This surfaces a fairness
 requirement for later multi-round matches: **rotate the opening lead between
 rounds**, mirroring the real game's rotating dealer. Not addressed yet (there is
 no multi-round match loop).
+
+### Multiplayer (step 1): N-player engine + match config + teams seam -- Christian
+
+Generalized the engine off "exactly 2 players" to N players (2–4), driven by a
+match-level config, and laid the seam for team scoring. No bidding yet.
+
+**`MatchConfig`** (`Core/Game/MatchConfig.cs`) — the settings chosen once per
+match and held for every round: `PlayerCount`, `CardsPerPlayer`, `DealStrategy`,
+`TeamOfSeat` (team index per seat), and the rule `Options`. It validates its own
+invariants at construction (`cards × players + leftover == 24`, and each deal
+strategy's leftover-count constraint), so an impossible combination fails at
+setup, never mid-deal. Named "Match", not "Round", because these are match-wide.
+
+**`DealStrategy`** (`Core/Game/DealStrategy.cs`) — an axis INDEPENDENT of the
+game mode (e.g. 2v2 can be DealAll or the "5+1" draft):
+
+- `DealAll` — deal everything, no leftover. *(implemented)*
+- `DrawPilePerTrick` — partial deal, leftover drawn one-per-trick, follow-suit
+  suspended while the pile has cards ("cu carti de jos"). *(implemented; the
+  former 1v1 behaviour)*
+- `RevealAndDraft` — partial deal, leftover revealed, bid winner drafts first
+  then clockwise. *(stubbed — needs bidding; throws a clear NotImplemented)*
+- `BlindSurprise` — partial deal, random face-down leftover(s), no choice.
+  *(stubbed — later)*
+
+**`GameMode` presets** (`Core/Game/GameMode.cs`) — `OneVsOne` (2p, 8 each,
+DrawPilePerTrick), `TwoVsTwo` (4p, 6 each, DealAll, seats 0,2 vs 1,3),
+`OneVsOneVsOne` (3p, 7 each, RevealAndDraft), `FourPlayerIndividual` (4p, 6 each,
+DealAll). Each maps to a default `MatchConfig`; an advanced menu can override
+fields later. 1v1v1v1 was included because it is nearly free once N-player
+exists.
+
+**Team scoring seam — `ScoringUnit`** (`Core/Game/ScoringUnit.cs`). This was the
+design decision of the session (see the Player/ScoringUnit discussion): rather
+than a second point accumulator, a `ScoringUnit` is a VIEW over its member
+participants — `CapturedPoints` is the computed SUM of its members, so there is
+one source of truth (the participant). The parallel is
+`Player : RoundParticipant :: Team : ScoringUnit`. The engine always awards a
+won trick's points to the winning PARTICIPANT; a team total is just the sum.
+This is why 2v2 point-pooling worked with ZERO changes to the trick loop — the
+indirection was the whole point. (Option B of two clean options; Option A would
+have moved the tally onto the unit and dropped it from the participant.)
+
+**`RoundEngine` generalized.** Constructor now takes a `MatchConfig`; seating is
+`(_leaderIndex + i) % PlayerCount`; deal sizes come from config; the trick
+collects `PlayerCount` cards; `DrawFromPile` only runs for `DrawPilePerTrick`.
+`Play()` now returns `ScoringUnit[]` (per-team tallies), which also serves
+individual play (one unit per player). Trump is still "first card played"
+(bidding is step 2).
+
+**Verification.** Sandbox gained a mode arg (`1v1 | 2v2 | 1v1v1 | ffa4`). Over
+40 seeds each, the 120-point checksum held with ZERO failures for 1v1, 2v2, and
+ffa4. 2v2 correctly pools by team (e.g. `Alice / Cara` vs `Bob / Dan`). 1v1v1
+defers cleanly with an informative NotImplementedException (RevealAndDraft needs
+bidding), as designed.
+
+**Deferred:** bidding (step 2) → unblocks RevealAndDraft for real 1v1v1 (step 4)
+and the 2v2 "5+1" override; team *score conversion* (step 5) will consume these
+ScoringUnit totals.
+
+### Bidding (step 2) + greedy bid/lead heuristics -- Christian
+
+**Bidding phase.** Inserted between deal and play: Deal → Bid → winner leads →
+PlayAllTricks. New pieces in `Core/Game/`:
+
+- `Bid` — PASS or a numeric value. The value is NOT capped at 6 in the type; the
+  ceiling is `MatchConfig.MaxBid` (default 6, raisable by future power-ups).
+- `BiddingContext` — current high bid + max, given to the controller.
+- `RoundResult` — now returned by `RoundEngine.Play()`; carries the per-team
+  `ScoringUnit[]` plus the recorded winning bid, bid-winner seat, and trump.
+  The bid is RECORDED but NOT yet scored — score conversion (contract made /
+  failed) is deferred to its own milestone, and this result object means that
+  milestone needs no re-plumbing.
+- `IPlayerController.PlaceBid(self, context)` — the bidding decision seam,
+  alongside `ChooseCard`. Human vs AI stay interchangeable.
+
+**Engine bidding loop.** Seats bid in order from seat 0; a pass drops a seat out;
+a numeric bid must exceed the current high and not exceed `MaxBid` (out-of-range
+is treated as a pass). Highest remaining bidder wins and becomes the opening
+leader. **Forced-1:** if everyone passes, the LAST player to pass is forced to a
+contract of 1 (per the chosen rule — not an arbitrary seat). Trump is still set
+by the opening lead, which is now specifically the bid winner's lead. Verified a
+contested case (2 → 4, others pass, highest wins and leads) with a throwaway test
+bidder, since both shipping controllers currently bid conservatively.
+
+**Greedy bid heuristic (`GreedyHeuristicController`, doc section F).** Estimates
+hand strength AS IF the longest suit were trump (which lead rule B.0 then
+realizes, so bid and lead agree), and bids the highest S whose 33×S it clears by
+a safety margin, else passes. Deliberately conservative (overbidding is
+punished). Score = trump-length value + defensible honors (trump honors full,
+guarded non-trump honors partial). Tunable constants, empirically set:
+`TrumpLengthValue=14`, `GuardedHonorPercent=75`, `SafetyMargin=3`.
+
+**Greedy lead — forced opening lead (doc rule B.0).** The opening lead (detected
+by trump being unset) now FORCES the longest suit as trump: pick the suit with
+the most cards (tie-break most points), lead its lowest card — establishing the
+intended trump cheaply without burning a high trump. Subsequent draw-phase leads
+(B.1) and normal leads (B.2) are unchanged. This replaced the earlier behaviour
+where the opening lead used B.1 and trump was an accidental side effect; it makes
+the bid's assumed trump and the actual trump consistent by construction.
+
+**Empirical calibration (8-card 1v1 hands, 60 seeds, scores instrumented then
+the probe removed).** Score range 28–85, mean ~53. With the shipped constants:
+~93% of hands bid ≥1, ~18% reach a bid of 2, 0% reach 3. The `SafetyMargin`
+lever was measured (margin 6 → 8% bid-2; 3 → 18%; 0 → 20%) and set to 3 for
+"conservative but not timid". NOTE: this is calibrated against intuition, not
+outcomes — there is no match-score signal yet to tell whether a bid of S
+actually paid off. Real tuning waits for score conversion (step 5).
+
+**Verification.** 120-point checksum holds with zero failures across 1v1, 2v2,
+ffa4 over 40 seeds each. Forced opening lead and forced-1 both confirmed in the
+play logs. The greedy doc (`docs/ai/greedy-heuristic.md`) was updated first (B.0
+added, section F written, stale notes corrected) and the controller matches it.
+
+**Known limitations (carried forward):** the bid ignores teams (own-hand-only
+scoring under-bids in 2v2 where the TEAM must make 33×S), ignores announcements,
+and does no opponent modelling. The greedy doc's older "Measured performance"
+table predates bidding + B.0 and is now stale (left as a historical note).
+
+### Step 3 addendum + Step 4: explicit trump, reveal-and-draft, forced trump lead -- Christian
+
+**Step 3 (team view for UI).** Most of "team scoring" was already done by the
+step-1 scoring-unit seam (card points pool by team automatically). The only gap
+was a participant → team lookup for the UI. Added `RoundResult.UnitOf(participant)`
+— a linear scan over the (≤4) units' member lists returning the participant's
+scoring unit, whose `CapturedPoints` is the team total to display. Deliberately
+NOT a back-reference on `RoundParticipant` (option b): participant and unit stay
+decoupled; whoever holds all the units does the lookup. There was no prior
+participant → unit method (`ScoringUnit.Members` is the reverse direction).
+
+**Step 4 reshaped the trump mechanic across the whole engine.** Adding the draft
+forced trump to be decided BEFORE play (the draft's risk/reward is "commit to
+trump, then gamble on the reveal"), so "first card led sets trump" was replaced
+everywhere by an explicit declaration.
+
+New round flow (all modes): **Deal → Bid → DeclareTrump → Draft → Play.**
+
+- **`IPlayerController` gained two decisions:** `DeclareTrump(self)` (bid winner
+  only, after bidding, before the reveal) and `ChooseDraftCard(self, available,
+  trump)`. Human vs AI stay interchangeable.
+- **Engine:** `DeclareTrump()` asks the bid winner's controller for the suit and
+  sets `_trump`; `EstablishTrumpIfUnset` and the mid-trick "first card sets
+  trump" logic were deleted. `RunDraftIfNeeded()` handles `RevealAndDraft`:
+  reveal the leftover publicly (logged), then bid-winner-first clockwise, each
+  player drafts one card into hand.
+- **New hard rule (rule 'a'): the bid winner must lead TRUMP on the opening.**
+  Implemented as a legality rule `LeadTrumpOnOpeningRule` driven by a new
+  `LegalMoveContext.IsOpeningLead` flag (true only for the round's first play).
+  Ordered BEFORE `DrawPhaseAnythingGoesRule` so it overrides the draw-phase
+  "anything goes" short-circuit on that one lead. Because it lives in the
+  pipeline, it constrains humans and AI identically — the greedy AI needed NO
+  opening-lead logic; it just picks among the trump-only set the pipeline hands
+  it. This is what let us delete the greedy B.0 "forced opening lead" hack.
+
+**Greedy AI updates.** `DeclareTrump` = longest suit (same computation the bid
+heuristic scores on, extracted into a shared `LongestSuit` helper, so bid and
+trump always agree). `ChooseDraftCard` = highest trump available, else
+highest-points card (trump beats everything). B.0 removed; the opening lead now
+falls through to the normal lead rules, which operate on the pipeline's
+trump-filtered set.
+
+**New mode.** `GameMode.TwoVsTwoDraft` — 2v2 "5 + 1": 5 dealt each, 4 revealed
+and drafted one apiece (`RevealAndDraft`). Kept as its own enum entry (the set of
+modes is small and controlled). The plain `TwoVsTwo` (6 each, `DealAll`) stays.
+
+**Verification.** All five modes (1v1, 2v2, 2v2draft, 1v1v1, ffa4) play full
+rounds; the 120-point checksum held with zero failures over 40 seeds each (200
+runs). Confirmed per round: trump declared before the draft, draft order is
+bid-winner-then-clockwise with one card each, and the opening lead is ALWAYS
+trump (checked across seeds). Note: an initial "forced-trump" failure was a bug
+in the verification SCRIPT (parsed the wrong log line), not the engine — the rule
+was correct; re-verified with a corrected parse.
+
+**Deferred still:** score conversion + announcements (the bids recorded on
+`RoundResult` remain unscored); the multi-round match loop with rotating
+opening lead; AI draft-gambling / overbidding (greedy stays conservative).
+
+### Step 5: score conversion + match loop -- Christian
+
+Turned the recorded-but-unused bids into actual match scoring, and added the
+multi-round match loop. (Announcements/marriages split off to a future step 6.)
+
+**Round scoring (`Core/Game/Scoring/`).** `IRoundScorer` (pluggable policy) +
+`StandardRoundScorer`:
+
+- Victory points a team earns = `capturedPoints / 33` (integer division).
+- Non-bidding teams always ADD their earned points.
+- Bidding team: if earned ≥ bid (contract made) ADD earned; else (missed)
+  SUBTRACT the **bid** value. (Confirmed with Christian: miss deducts the bid,
+  not the earned points.)
+
+To let the scorer know which team is the bidding side, `RoundResult` now also
+records `BidWinnerTeam` (the engine fills it from `TeamOfSeat[bidWinnerSeat]`).
+
+**Match loop (`MatchEngine`).** Owns the players/controllers/config/scorer and
+loops `RoundEngine` rounds until the match-end condition, then returns a
+`MatchResult` (winning team + its players + score). Per round it:
+
+- rotates the starting bidder (`(round-1) % playerCount`) — the fairness fix for
+  the opening-lead advantage we measured earlier; `RoundEngine` gained a
+  `startingBidderSeat` parameter for this,
+- varies the per-round seed (matchSeed + roundNumber) so rounds differ while the
+  match stays reproducible,
+- applies each team's delta in **lockstep** to every member's
+  `Player.MatchScore` (team scoring representation (a): teammates' scores always
+  move together, so a team's score = any member's score).
+
+**Match-end condition.** A team wins once it reaches `MatchConfig.TargetScore`
+(default 11, configurable) AND leads the runner-up by **≥ 2**. If the top two are
+within 1 — even past the target — play continues until the gap is ≥ 2 (Christian's
+rule 3). Verified this triggers: a 2v2 match sat at 10–10, went 12–11 (past
+target but only 1 clear → kept playing), then ended 14–12.
+
+**Engine cleanups riding along.** Removed the last stale `EstablishTrumpIfUnset`
+doc reference; forced-1 doc corrected to "last to pass"; bidding now starts at
+the rotated `startingBidderSeat` instead of hardcoded seat 0.
+
+**Sandbox.** Now plays a full MATCH by default (round-by-round deltas +
+standings + winner). The old detailed single-round view (per-trick log, per-player
+own/team points) is still available via a `round` arg.
+
+**Verification.** All five modes (1v1, 2v2, 2v2draft, 1v1v1, ffa4) run complete
+matches that always terminate (no tiebreak infinite loop) across multiple seeds.
+The greedy seats beat the baseline (seat 0) in essentially every match, as
+expected over a full match where the stronger engine compounds its edge.
+
+**Deferred to step 6:** announcements / marriages (40-20), which also pull in the
+">3 bid requires an announcement" gate we skipped. The greedy bid tuning remains
+provisional but now has a real signal available (match win rates) for future
+tuning.
+
+### Step 6: marriages (anunțări / 40-20) -- Christian
+
+Added marriages. A marriage is a Three + Four of the same suit; announcing it
+(by leading one of the two) grants a bonus that counts toward the team's point
+total: **40** if that suit is trump, **20** otherwise. No bid-exactly-1 caveat
+(Christian plays without it), and the ">3 bid needs a marriage" gate stays
+skipped as before.
+
+**Rules locked (all confirmed with Christian):** announce only when LEADING;
+announce by leading the 3 or 4 of the suit (the other card stays in hand);
+multiple marriages of different suits each announce separately; bonus points add
+to the same pool divided by 33 — which is how a side can exceed the 120 raw
+ceiling and earn a 4/5/6.
+
+**Detection** — `Hand.HasMarriage(suit)` and `Hand.MarriageSuits()`.
+
+**Scoring** — `RoundParticipant.MarriagePoints` (separate from captured card
+points, so the 120-point card checksum is unaffected). `ScoringUnit` gained
+`MarriagePoints` and `TotalPoints = captured + marriage`; `StandardRoundScorer`
+now divides `TotalPoints` (not just captured) by 33.
+
+**The announce decision + the lead coupling.** New `IPlayerController.AnnounceMarriage(self, available, trump)`,
+called by the engine only when the player is leading and holds a marriage;
+returns the suit to announce or null. The subtle part — "if you announce suit X
+you must lead the 3/4 of X" — was implemented as a **legality rule**
+(`AnnouncedMarriageLeadRule`, driven by a new `LegalMoveContext.AnnouncedSuit`),
+per Christian's suggestion, rather than ad-hoc filtering in the engine. So the
+engine decides + awards the bonus + stamps the suit on the context, and the
+pipeline enforces the lead restriction — consistent with how every other
+obligation works. Ordered right after `LeadTrumpOnOpeningRule` (and before the
+draw-phase short-circuit, so the narrowing survives the `Final` in 1v1).
+
+**Opening-lead interaction.** The opening lead must be trump
+(`LeadTrumpOnOpeningRule`). So on the opening lead only a *trump* marriage is
+offered (a non-trump marriage would conflict); other leads allow any held
+marriage. Handled in the engine's `ResolveAnnouncement`.
+
+**AI.** Baseline never announces (forfeits the bonus — consistent with its
+do-nothing tier). Greedy always announces when able, preferring the trump
+marriage (40 > 20); because the engine restricts the lead to the announced 3/4
+via the rule, the greedy `ChooseCard` needs no coordination.
+
+**Verification.** Clean build (removed a stray duplicate `using System;` that
+had crept into RoundEngine.cs and Program.cs). The 120-point CARD checksum still
+holds across all five modes (marriage points are tracked separately). Observed a
+round where the greedy AI announced a trump marriage (+40) AND a non-trump one
+(+20) in the same round, earning a team delta of +4 — impossible from the 120
+card pool alone, confirming marriages feed scoring correctly. All modes still
+play complete, terminating matches.
+
+**Status:** the five-step plan plus this step 6 are done. Core now covers: cards,
+the pipes-and-filters legality system, trump (declared via bidding), N-player +
+teams, bidding, reveal-and-draft, full match scoring with rotating dealer, and
+marriages. Remaining: greedy-doc "Measured performance" table is stale; a greedy
+bid/announce heuristic could use the real match-win signal for tuning; and the
+Unity presentation layer is untouched.
