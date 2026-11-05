@@ -696,9 +696,14 @@ namespace CruceChaos.Unity
                 {
                     bool done = false;
                     _humanController.BeginAnnounceMarriage(marriages, s => { announcedSuit = s; done = true; });
+                    // The panel fires this single callback for both a suit pick
+                    // and Skip: a chosen suit has a value, Skip passes null.
                     _marriagePanel?.Show(marriages,
-                        suit => { _humanController.SubmitMarriage(suit.Value); },
-                        ()   => { _humanController.SubmitNoMarriage(); });
+                        suit =>
+                        {
+                            if (suit.HasValue) _humanController.SubmitMarriage(suit.Value);
+                            else               _humanController.SubmitNoMarriage();
+                        });
                     yield return new WaitUntil(() => done);
                     _marriagePanel?.Hide();
 

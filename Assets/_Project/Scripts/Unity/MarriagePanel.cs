@@ -49,7 +49,12 @@ namespace CruceChaos.Unity
             gameObject.SetActive(false);
         }
 
-        public void Show(IReadOnlyList<Suit> available, Action<Suit?> onChosen, Action onSkip)
+        /// <summary>
+        /// Shows the panel. <paramref name="onChosen"/> is fired once with the
+        /// picked suit, or with <c>null</c> when the player skips (declines to
+        /// announce). There is no separate skip callback — null IS the skip.
+        /// </summary>
+        public void Show(IReadOnlyList<Suit> available, Action<Suit?> onChosen)
         {
             _onChosen = onChosen;
 
