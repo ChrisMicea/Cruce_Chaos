@@ -65,6 +65,22 @@ namespace CruceChaos.Unity
 
         public void Hide() => gameObject.SetActive(false);
 
+        /// <summary>Increments the slider by 1, wrapping back to MinLegalBid after MaxBid.</summary>
+        public void IncrementBid()
+        {
+            if (_bidSlider == null) return;
+            int next = (int)_bidSlider.value + 1;
+            if (next > (int)_bidSlider.maxValue)
+                next = (int)_bidSlider.minValue;
+            _bidSlider.value = next;
+        }
+
+        /// <summary>Confirms the current slider value as a bid (same as clicking Bid button).</summary>
+        public void ConfirmBid() => OnBidClicked();
+
+        /// <summary>Passes (same as clicking Pass button).</summary>
+        public void ConfirmPass() => OnPassClicked();
+
         private void OnSliderChanged(float value) => UpdateLabel();
 
         private void UpdateLabel()

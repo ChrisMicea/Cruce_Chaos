@@ -81,6 +81,9 @@ namespace CruceChaos.Unity
         [Header("Logging")]
         [SerializeField] private GameLogger _gameLogger;
 
+        [Header("Keyboard Input")]
+        [SerializeField] private KeyboardInputHandler _keyboardInput;
+
         [Header("Scene Navigation")]
         [SerializeField] private string _mainMenuScene = "Main Menu";
 
@@ -283,7 +286,9 @@ namespace CruceChaos.Unity
                         bool bidDone = false;
                         _humanController.BeginBid(ctx, b => { bid = b; bidDone = true; });
                         _bidPanel?.Show(ctx, _humanController, () => { });
+                        _keyboardInput?.BeginBidInput();
                         yield return new WaitUntil(() => bidDone);
+                        _keyboardInput?.EndBidInput();
                         _bidPanel?.Hide();
                     }
                     else // AI
@@ -459,7 +464,9 @@ namespace CruceChaos.Unity
             Card chosen   = default;
             bool cardDone = false;
             _humanController.BeginTurn(legal, card => { chosen = card; cardDone = true; });
+            _keyboardInput?.BeginCardInput();
             yield return new WaitUntil(() => cardDone);
+            _keyboardInput?.EndCardInput();
             _humanController.CancelTurn();
 
             _gameLogger?.LogCardPlayed("You", chosen.ToString());
@@ -629,6 +636,9 @@ namespace CruceChaos.Unity
                 // Left cards render under right cards.
                 go.transform.SetSiblingIndex(i);
             }
+
+            // Keep keyboard handler in sync with the new card views.
+            _keyboardInput?.SetCardViews(_humanCardViews);
         }
 
         private void RebuildAIHand()
