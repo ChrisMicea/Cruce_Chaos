@@ -59,6 +59,24 @@ namespace CruceChaos.Core.Game
         /// <summary>Cards left undealt after the initial deal.</summary>
         public int LeftoverCount => DeckSize - (CardsPerPlayer * PlayerCount);
 
+        /// <summary>
+        /// The seat that opens the bidding for a given 1-based round number.
+        /// The opener rotates each round for fairness (whoever opens has an
+        /// advantage under these rules): round 1 opens at seat 0, round 2 at
+        /// seat 1, and so on, wrapping by <see cref="PlayerCount"/>.
+        ///
+        /// This is the single source of truth for the rotation. Both the
+        /// headless <see cref="MatchEngine"/> and the Unity round driver call it
+        /// so the two can never diverge.
+        /// </summary>
+        /// <param name="roundNumber">1-based round index (first round == 1).</param>
+        public int StartingBidderSeat(int roundNumber)
+        {
+            // Normalise so any int (including a 0 or negative) maps into range.
+            int zeroBased = roundNumber - 1;
+            return ((zeroBased % PlayerCount) + PlayerCount) % PlayerCount;
+        }
+
         public MatchConfig(
             int playerCount,
             int cardsPerPlayer,

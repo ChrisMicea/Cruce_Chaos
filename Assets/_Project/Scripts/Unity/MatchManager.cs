@@ -38,6 +38,9 @@ namespace CruceChaos.Unity
         [Header("Scene Navigation")]
         [SerializeField] private string _mainMenuScene = "Main Menu";
 
+        [Header("Audio")]
+        [SerializeField] private SoundManager _sound;
+
         /// <summary>Per-team cumulative match score, keyed by team index.</summary>
         private readonly Dictionary<int, int> _teamScores = new Dictionary<int, int>();
 
@@ -122,6 +125,22 @@ namespace CruceChaos.Unity
 
         public void OnMainMenuClicked()
         {
+            // Plays the menu-button click, then waits for it before loading the
+            // menu scene — otherwise LoadScene destroys the AudioSource mid-clip
+            // and the click is cut off (same fix as MainMenuController).
+            if (_returningToMenu) return;
+            _returningToMenu = true;
+            StartCoroutine(PlayClickThenLoadMenu());
+        }
+
+        private bool _returningToMenu;
+
+        private System.Collections.IEnumerator PlayClickThenLoadMenu()
+        {
+            float wait = _sound != null ? _sound.PlayMenuButton() : 0f;
+            wait = Mathf.Min(wait, 0.4f);
+            if (wait > 0f)
+                yield return new WaitForSeconds(wait);
             SceneManager.LoadScene(_mainMenuScene);
         }
 
@@ -168,6 +187,11 @@ namespace CruceChaos.Unity
 
         private void ShowMatchOver(int winningTeam)
         {
+            // Match-end fanfare: human's team won vs lost. Played before the
+            // early-returns below so it fires even if the panel refs are unset.
+            if (winningTeam == _myTeam) _sound?.PlayMatchWon();
+            else                        _sound?.PlayMatchLost();
+
             if (_matchOverPanel == null) return;
             _matchOverPanel.SetActive(true);
 

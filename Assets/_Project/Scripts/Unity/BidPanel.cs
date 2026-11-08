@@ -28,9 +28,18 @@ namespace CruceChaos.Unity
         [SerializeField] private Button          _passButton;
         [SerializeField] private TextMeshProUGUI _bidButtonLabel;
 
+        [Header("Audio")]
+        [Tooltip("Plays a short tick when the player moves the bid slider. " +
+                 "Optional — leave unassigned to run silent.")]
+        [SerializeField] private SoundManager _sound;
+
         private HumanPlayerController _controller;
         private Action                _onDone;
         private BiddingContext        _context;
+
+        // True only while Show() is programmatically setting the slider, so the
+        // onValueChanged handler can skip the tick for that non-user change.
+        private bool _settingSliderProgrammatically;
 
         private void Awake()
         {
@@ -53,10 +62,14 @@ namespace CruceChaos.Unity
 
             if (_bidSlider != null)
             {
+                // Suppress the slider tick for this programmatic reset — it's
+                // panel setup, not the player moving the slider.
+                _settingSliderProgrammatically = true;
                 _bidSlider.minValue    = context.MinLegalBid;
                 _bidSlider.maxValue    = context.MaxBid;
                 _bidSlider.wholeNumbers = true;
                 _bidSlider.value       = context.MinLegalBid;
+                _settingSliderProgrammatically = false;
             }
 
             UpdateLabel();
@@ -81,7 +94,12 @@ namespace CruceChaos.Unity
         /// <summary>Passes (same as clicking Pass button).</summary>
         public void ConfirmPass() => OnPassClicked();
 
-        private void OnSliderChanged(float value) => UpdateLabel();
+        private void OnSliderChanged(float value)
+        {
+            UpdateLabel();
+            if (!_settingSliderProgrammatically)
+                _sound?.PlayBidSlider();
+        }
 
         private void UpdateLabel()
         {

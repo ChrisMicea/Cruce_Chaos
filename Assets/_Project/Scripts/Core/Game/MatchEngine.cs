@@ -73,8 +73,8 @@ namespace CruceChaos.Core.Game
             while (!IsMatchOver(out winningTeam))
             {
                 roundNumber++;
-                // Rotate the starting bidder each round.
-                int startingBidder = (roundNumber - 1) % _config.PlayerCount;
+                // Rotate the starting bidder each round (shared rule on config).
+                int startingBidder = _config.StartingBidderSeat(roundNumber);
 
                 _log($"========== Round {roundNumber} (opens: {_players[startingBidder].Name}) ==========");
 

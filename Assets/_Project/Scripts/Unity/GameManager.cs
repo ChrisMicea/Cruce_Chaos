@@ -95,6 +95,9 @@ namespace CruceChaos.Unity
         [Header("Keyboard Input")]
         [SerializeField] private KeyboardInputHandler _keyboardInput;
 
+        [Header("Audio")]
+        [SerializeField] private SoundManager _sound;
+
         [Header("Scene Navigation")]
         [SerializeField] private string _mainMenuScene = "Main Menu";
 
@@ -244,6 +247,7 @@ namespace CruceChaos.Unity
 
             _deck = new Deck();
             _deck.Shuffle();
+            _sound?.PlayDeckShuffle();
 
             // Clear the display order BEFORE dealing: DealCards repopulates it
             // for the human's new hand, so the later ApplyAutoSort() has cards to
@@ -316,6 +320,16 @@ namespace CruceChaos.Unity
                     wonBid:      result.BidWinnerTeam == t)).ToArray();
 
                 _scoreHUD?.ShowResult(rows, _winningBid);
+
+                // Round win/lose feedback: positive VP for the human's team this
+                // round = won, otherwise lost. Skipped when the match just ended,
+                // so the match fanfare (played by MatchManager) isn't stepped on.
+                if (!_matchManager.IsMatchOver)
+                {
+                    int myDelta = deltas.TryGetValue(MyTeamIndex(), out int md) ? md : 0;
+                    if (myDelta > 0) _sound?.PlayRoundWon();
+                    else             _sound?.PlayRoundLost();
+                }
 
                 // Wait so the player can read the result.
                 yield return new WaitForSeconds(3f);
@@ -407,9 +421,17 @@ namespace CruceChaos.Unity
             bool[] active    = new bool[_playerCount];
             for (int s = 0; s < _playerCount; s++) active[s] = true;
             int activeCount  = _playerCount;
-            int lastPasser   = 0;
 
-            int seat = 0; // human bids first
+            // Opening bidder rotates each round. Delegate to Core's shared rule
+            // (MatchConfig.StartingBidderSeat) rather than re-deriving the
+            // formula here — the Unity layer previously hardcoded seat 0 (the
+            // human always opened), which diverged from Core. Seat 0 is always
+            // the human, so the per-seat "is this the human?" checks below still
+            // hold regardless of who opens.
+            int startingBidder = _config.StartingBidderSeat(_roundNumber);
+            int lastPasser     = startingBidder;
+
+            int seat = startingBidder;
 
             while (activeCount > 1 || (activeCount >= 1 && highSeat < 0))
             {
@@ -444,6 +466,7 @@ namespace CruceChaos.Unity
                     {
                         highBid  = bid.Value;
                         highSeat = seat;
+                        _sound?.PlayBidPlaced();
                         _scoreHUD?.ShowBidInfo($"{SeatName(seat)} bid {highBid}");
                         _gameLogger?.LogBid(SeatName(seat), highBid);
                     }
@@ -452,6 +475,7 @@ namespace CruceChaos.Unity
                         active[seat] = false;
                         activeCount--;
                         lastPasser   = seat;
+                        _sound?.PlayBidPassed();
                         _scoreHUD?.ShowBidInfo($"{SeatName(seat)} passed");
                         _gameLogger?.LogBid(SeatName(seat), null);
                     }
@@ -567,6 +591,7 @@ namespace CruceChaos.Unity
 
                 available.Remove(picked);
                 p.Hand.Add(picked);
+                _sound?.PlayCardDraw();
                 RemoveDraftRevealCard(picked);
 
                 if (seat == 0)
@@ -689,8 +714,14 @@ namespace CruceChaos.Unity
             }
 
             yield return new WaitForSeconds(_trickResolvePause);
-            ResolveTrick();
-            yield return new WaitForSeconds(0.3f);
+            float trickSoundLen = ResolveTrick();
+
+            // Wait for the trick win/lose sting to finish before drawing, so the
+            // draw sound doesn't overlap it (1v1 draw-pile flow). Keep the
+            // original 0.3s floor for snappiness when the sting is short/absent,
+            // and cap it so an over-long clip can't stall the game.
+            float drawDelay = Mathf.Clamp(trickSoundLen, 0.3f, 1.5f);
+            yield return new WaitForSeconds(drawDelay);
             DrawFromPile();
         }
 
@@ -725,6 +756,7 @@ namespace CruceChaos.Unity
                     {
                         int bonus = _trump.HasValue && announcedSuit.Value == _trump.Value ? 40 : 20;
                         _humanParticipant.AddMarriagePoints(bonus);
+                        _sound?.PlayMarriageDeclared();
                         _scoreHUD?.ShowMarriageBonus(bonus);
                         _gameLogger?.LogMarriage("You", announcedSuit.Value.ToString(), bonus);
                         Debug.Log($"[Cruce] Human announces marriage in {announcedSuit.Value} (+{bonus})");
@@ -784,6 +816,7 @@ namespace CruceChaos.Unity
                     {
                         int bonus = _trump.HasValue && announcedSuit.Value == _trump.Value ? 40 : 20;
                         part.AddMarriagePoints(bonus);
+                        _sound?.PlayMarriageDeclared();
                         _scoreHUD?.ShowMarriageBonus(bonus);
                         _gameLogger?.LogMarriage(SeatName(seat), announcedSuit.Value.ToString(), bonus);
                         Debug.Log($"[Cruce] {SeatName(seat)} announces marriage in {announcedSuit.Value} (+{bonus})");
@@ -814,6 +847,7 @@ namespace CruceChaos.Unity
         {
             participant.Hand.Remove(card);
             _currentTrick.Add(participant, card);
+            _sound?.PlayCardPlaced();
 
             Sprite sprite = _spriteRegistry != null ? _spriteRegistry.GetSprite(card) : null;
             _trickAreaView?.AddCardToPile(sprite);
@@ -828,7 +862,12 @@ namespace CruceChaos.Unity
 
         // ── Trick resolution & draw ───────────────────────────────────────────
 
-        private void ResolveTrick()
+        /// <summary>
+        /// Resolves the current trick and returns the length (seconds) of the
+        /// win/lose sting it played, so the caller can wait for it to finish
+        /// before the next sound (the draw) starts. 0 if nothing played.
+        /// </summary>
+        private float ResolveTrick()
         {
             RoundParticipant winner = _currentTrick.DetermineWinner(_trump);
             int pts = _currentTrick.PointValue;
@@ -843,6 +882,9 @@ namespace CruceChaos.Unity
             int myTeam = MyTeamIndex();
             bool myTeamWon = _config.TeamOfSeat[_leaderIndex] == myTeam;
             _trickAreaView?.FlashWinner(myTeamWon);
+            float trickSoundLen = _sound != null
+                ? (myTeamWon ? _sound.PlayTrickWon() : _sound.PlayTrickLost())
+                : 0f;
 
             // Update every team's running total on the HUD (captured + marriage).
             // Display only; authoritative round scoring happens at round end.
@@ -857,6 +899,7 @@ namespace CruceChaos.Unity
                 _scoreHUD?.SetTeamPoints(kv.Key, kv.Value);
 
             Debug.Log($"[Cruce] Trick {_trickCount}: {winner.Player.Name} wins {pts} pts.");
+            return trickSoundLen;
         }
 
         private void DrawFromPile()
@@ -881,6 +924,7 @@ namespace CruceChaos.Unity
             }
 
             _scoreHUD?.SetDeckCount(_deck.Count);
+            _sound?.PlayCardDraw();
             ApplyAutoSort();
             RebuildHumanHand();
             RebuildAIHand();
@@ -944,6 +988,7 @@ namespace CruceChaos.Unity
                 Sprite sprite = _spriteRegistry != null ? _spriteRegistry.GetSprite(card) : null;
                 cv.Initialise(card, sprite, basePos, angleDeg);
                 cv.OnCardClicked += _humanController.HandleCardClicked;
+                cv.OnIllegalClickAttempt += () => _sound?.PlayIllegalMove();
                 _humanCardViews.Add(cv);
 
                 // Left cards render under right cards.
@@ -1191,6 +1236,7 @@ namespace CruceChaos.Unity
             RefreshAutoSortButton();
             if (_autoSort)
             {
+                _sound?.PlayHandSort();
                 ApplyAutoSort();
                 RebuildHumanHand();
                 ApplyTrumpHighlights();
@@ -1203,6 +1249,7 @@ namespace CruceChaos.Unity
         /// </summary>
         public void OnShuffleHandClicked()
         {
+            _sound?.PlayHandShuffle();
             System.Random rng = new System.Random();
             for (int i = _handDisplayOrder.Count - 1; i > 0; i--)
             {

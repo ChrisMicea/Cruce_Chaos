@@ -25,7 +25,7 @@ namespace CruceChaos.Unity
     [RequireComponent(typeof(Image))]
     [RequireComponent(typeof(Button))]
     public class CardView : MonoBehaviour,
-        IPointerEnterHandler, IPointerExitHandler
+        IPointerEnterHandler, IPointerExitHandler, IPointerClickHandler
     {
         // ---- Inspector fields ------------------------------------------------
 
@@ -54,6 +54,15 @@ namespace CruceChaos.Unity
         /// The GameManager subscribes to this on each CardView it spawns.
         /// </summary>
         public event Action<Card> OnCardClicked;
+
+        /// <summary>
+        /// Raised when the player clicks this card while it is NOT legal to
+        /// play. An illegal card's Button is non-interactable, so the normal
+        /// OnCardClicked path never fires for it; this view implements
+        /// IPointerClickHandler so the raycast still delivers the click here and
+        /// we can give "that move isn't allowed" feedback (e.g. a denied sound).
+        /// </summary>
+        public event Action OnIllegalClickAttempt;
 
         private Button        _button;
         private RectTransform _rect;
@@ -171,6 +180,19 @@ namespace CruceChaos.Unity
             _isHovered = false;
             RefreshVisuals();
             RecalcTargetPosition();
+        }
+
+        /// <summary>
+        /// A legal click reaches HandleClick through the Button's onClick, so
+        /// here we only react to clicks on an ILLEGAL card (whose Button is
+        /// disabled and therefore never raises onClick). This lets the game give
+        /// feedback that the move isn't allowed without double-firing the normal
+        /// click path.
+        /// </summary>
+        public void OnPointerClick(PointerEventData eventData)
+        {
+            if (!_isLegal)
+                OnIllegalClickAttempt?.Invoke();
         }
 
         // ---- Private helpers -------------------------------------------------
