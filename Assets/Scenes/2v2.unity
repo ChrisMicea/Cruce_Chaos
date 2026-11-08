@@ -936,6 +936,7 @@ MonoBehaviour:
   _bidButton: {fileID: 1670112027}
   _passButton: {fileID: 716060136}
   _bidButtonLabel: {fileID: 1787396521}
+  _sound: {fileID: 352755609}
 --- !u!114 &300339942
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1411,6 +1412,9 @@ MonoBehaviour:
   _roundLost: {fileID: 8300000, guid: 4d98c9962246a8456ae14aaa45650c80, type: 3}
   _matchWon: {fileID: 8300000, guid: 032b455ae0bb3f0a5b803966df379596, type: 3}
   _matchLost: {fileID: 8300000, guid: ab8bef8cb27eb9ad4a12dafa8e2f2589, type: 3}
+  _bidPlaced: {fileID: 8300000, guid: fcf5c4ba37ba7fd1498ff7c3f27a4241, type: 3}
+  _bidPassed: {fileID: 8300000, guid: 3403f5dd8a4b35d7e8c5f2ebb79830f8, type: 3}
+  _bidSlider: {fileID: 8300000, guid: 5507cde19342c27d0a9f0662f93dfe65, type: 3}
   _sfxVolume: 1
 --- !u!82 &352755610
 AudioSource:
@@ -5229,6 +5233,7 @@ MonoBehaviour:
   _cardBackSprite: {fileID: 7482667652216324306, guid: 4ae6b667018ff82e39e33fa3281b8174, type: 3}
   _aiThinkDelay: 0.8
   _trickResolvePause: 1
+  _bidStepDelay: 0.6
   _fanAnglePerCard: 5
   _fanMaxAngle: 50
   _fanRadius: 1800

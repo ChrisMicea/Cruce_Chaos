@@ -70,6 +70,11 @@ namespace CruceChaos.Unity
         [SerializeField] [Range(0.3f, 2f)]  private float _aiThinkDelay       = 0.8f;
         [SerializeField] [Range(0.3f, 2f)]  private float _trickResolvePause  = 1.0f;
 
+        [Tooltip("How long an AI 'thinks' before each bid/pass. Also the settle " +
+                 "pause after every seat's bid/pass so their sounds don't " +
+                 "overlap. Temporary pacing until the timer system lands.")]
+        [SerializeField] [Range(0.5f, 3f)]  private float _bidStepDelay       = 1.2f;
+
         [Header("Hand Fan Layout")]
         [Tooltip("Angle between adjacent cards in degrees. Controls density regardless of hand size.")]
         [SerializeField] [Range(1f, 15f)] private float _fanAnglePerCard = 4f;
@@ -454,7 +459,7 @@ namespace CruceChaos.Unity
                     }
                     else // AI
                     {
-                        yield return new WaitForSeconds(_aiThinkDelay * 0.5f);
+                        yield return new WaitForSeconds(_bidStepDelay);
                         bid = _controllers[seat].PlaceBid(_participants[seat], ctx);
                     }
 
@@ -479,6 +484,12 @@ namespace CruceChaos.Unity
                         _scoreHUD?.ShowBidInfo($"{SeatName(seat)} passed");
                         _gameLogger?.LogBid(SeatName(seat), null);
                     }
+
+                    // Settle pause after this seat's bid/pass so its sound and
+                    // the HUD update land before the next seat acts — stops
+                    // consecutive bid/pass sounds from overlapping. (Temporary
+                    // pacing until the timer system replaces it.)
+                    yield return new WaitForSeconds(_bidStepDelay);
                 }
 
                 if (activeCount == 0) break;
