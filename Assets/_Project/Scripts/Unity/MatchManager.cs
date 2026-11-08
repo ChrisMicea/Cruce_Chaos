@@ -14,9 +14,10 @@ namespace CruceChaos.Unity
     /// the match-end rule: the leading team is at or past the target AND at
     /// least 2 clear of the runner-up (mirrors Core's MatchEngine.IsMatchOver).
     ///
-    /// Scores are keyed by team index, so this works for any player/team count.
-    /// The two serialized labels show the human's team and the opposing side
-    /// (for 1v1 / 2v2); the N-player scoreboard is layered on in a later step.
+    /// Scores and labels are per-team (one slot per team), so this works for any
+    /// player/team count — 2 for 1v1 / 2v2, 3 for 1v1v1, 4 for free-for-all.
+    /// GameManager registers the slots (team index + display name) at startup,
+    /// the SAME names the ScoreHUD uses, so the two HUDs stay consistent.
     /// </summary>
     public class MatchManager : MonoBehaviour
     {
@@ -24,8 +25,11 @@ namespace CruceChaos.Unity
         [SerializeField] private int _targetMatchPoints = 11;
 
         [Header("HUD — Match Score Labels")]
-        [SerializeField] private TextMeshProUGUI _humanMatchScoreLabel;
-        [SerializeField] private TextMeshProUGUI _aiMatchScoreLabel;
+        [Tooltip("One match-score label per team/player, in the SAME order as the " +
+                 "ScoreHUD's Score Labels: element 0 = you, then opponents in team " +
+                 "order. Wire 2 for 1v1/2v2, 3 for 1v1v1, 4 for free-for-all. " +
+                 "Extra labels are hidden automatically.")]
+        [SerializeField] private TextMeshProUGUI[] _matchScoreLabels;
 
         [Header("Match Over Panel")]
         [SerializeField] private GameObject      _matchOverPanel;
@@ -37,18 +41,12 @@ namespace CruceChaos.Unity
         /// <summary>Per-team cumulative match score, keyed by team index.</summary>
         private readonly Dictionary<int, int> _teamScores = new Dictionary<int, int>();
 
+        /// <summary>Scoreboard slots (team index + display name), in label order.</summary>
+        private ScoreHUD.Slot[] _slots = System.Array.Empty<ScoreHUD.Slot>();
+        private readonly Dictionary<int, int> _slotOfTeam = new Dictionary<int, int>();
+
         /// <summary>The team index the human belongs to (for win/lose wording).</summary>
         private int _myTeam;
-
-        /// <summary>
-        /// Whether this match is team play (2v2) rather than individual (1v1).
-        /// Only affects HUD wording: individual play keeps "You" / "AI", team
-        /// play shows "Your Team" / "Opponents".
-        /// </summary>
-        private bool _isTeamPlay;
-
-        private string MyLabel  => _isTeamPlay ? "Your Team" : "You";
-        private string OppLabel => _isTeamPlay ? "Opponents" : "AI";
 
         /// <summary>True after the match-over condition is reached.</summary>
         public bool IsMatchOver { get; private set; }
@@ -56,18 +54,24 @@ namespace CruceChaos.Unity
         // ── Setup (called by GameManager at startup) ─────────────────────────
 
         /// <summary>
-        /// Registers the teams in this match and which one is the human's, so
-        /// scores can be tracked per team and the match-over wording knows who
-        /// "you" are. Call once before the first round.
+        /// Registers the scoreboard slots (one per team, SAME names/order as the
+        /// ScoreHUD) and which team is the human's. Binds slots to the serialized
+        /// labels by position; extra labels are hidden. Call once before the
+        /// first round.
         /// </summary>
-        public void SetTeams(IEnumerable<int> teamIndices, int myTeam, bool isTeamPlay)
+        public void SetScoreboard(ScoreHUD.Slot[] slots, int myTeam)
         {
-            _teamScores.Clear();
-            foreach (int t in teamIndices)
-                _teamScores[t] = 0;
+            _slots = slots ?? System.Array.Empty<ScoreHUD.Slot>();
+            _myTeam = myTeam;
 
-            _myTeam     = myTeam;
-            _isTeamPlay = isTeamPlay;
+            _teamScores.Clear();
+            _slotOfTeam.Clear();
+            for (int i = 0; i < _slots.Length; i++)
+            {
+                _teamScores[_slots[i].TeamIndex] = 0;
+                _slotOfTeam[_slots[i].TeamIndex] = i;
+            }
+
             IsMatchOver = false;
             RefreshLabels();
             if (_matchOverPanel != null) _matchOverPanel.SetActive(false);
@@ -79,9 +83,8 @@ namespace CruceChaos.Unity
         public int TeamScore(int team)
             => _teamScores.TryGetValue(team, out int s) ? s : 0;
 
-        /// <summary>Sum of every team's score except <paramref name="team"/>.</summary>
-        public int OpponentsScore(int team)
-            => _teamScores.Where(kv => kv.Key != team).Sum(kv => kv.Value);
+        private string NameOfTeam(int team)
+            => _slotOfTeam.TryGetValue(team, out int i) ? _slots[i].Name : $"T{team}";
 
         // ── Public API ───────────────────────────────────────────────────────
 
@@ -101,7 +104,7 @@ namespace CruceChaos.Unity
 
             string standings = string.Join("  |  ",
                 _teamScores.OrderByDescending(kv => kv.Value)
-                           .Select(kv => $"T{kv.Key}: {kv.Value}"));
+                           .Select(kv => $"{NameOfTeam(kv.Key)}: {kv.Value}"));
             Debug.Log($"[Match] Round applied. Standings: {standings}");
 
             RefreshLabels();
@@ -144,12 +147,23 @@ namespace CruceChaos.Unity
             }
         }
 
+        /// <summary>
+        /// Updates each team's match-score label by slot position. Labels beyond
+        /// the slot count are hidden; slots beyond the label count have no
+        /// on-screen readout.
+        /// </summary>
         private void RefreshLabels()
         {
-            if (_humanMatchScoreLabel != null)
-                _humanMatchScoreLabel.text = $"{MyLabel}: {TeamScore(_myTeam)}";
-            if (_aiMatchScoreLabel != null)
-                _aiMatchScoreLabel.text = $"{OppLabel}: {OpponentsScore(_myTeam)}";
+            if (_matchScoreLabels == null) return;
+            for (int i = 0; i < _matchScoreLabels.Length; i++)
+            {
+                if (_matchScoreLabels[i] == null) continue;
+                bool used = i < _slots.Length;
+                _matchScoreLabels[i].gameObject.SetActive(used);
+                if (used)
+                    _matchScoreLabels[i].text =
+                        $"{_slots[i].Name}: {TeamScore(_slots[i].TeamIndex)}";
+            }
         }
 
         private void ShowMatchOver(int winningTeam)
@@ -157,15 +171,18 @@ namespace CruceChaos.Unity
             if (_matchOverPanel == null) return;
             _matchOverPanel.SetActive(true);
 
-            if (_matchOverLabel != null)
-            {
-                bool humanWins = winningTeam == _myTeam;
-                string winner  = humanWins
-                    ? (_isTeamPlay ? "Your team wins" : "You win")
-                    : (_isTeamPlay ? "Opponents win"  : "AI wins");
-                _matchOverLabel.text =
-                    $"{winner} the match!\n{TeamScore(_myTeam)} – {OpponentsScore(_myTeam)}";
-            }
+            if (_matchOverLabel == null) return;
+
+            // Standings line: every team's final score, highest first.
+            string standings = string.Join("   ",
+                _teamScores.OrderByDescending(kv => kv.Value)
+                           .Select(kv => $"{NameOfTeam(kv.Key)} {kv.Value}"));
+
+            string headline = winningTeam == _myTeam
+                ? "You win the match!"
+                : $"{NameOfTeam(winningTeam)} wins the match!";
+
+            _matchOverLabel.text = $"{headline}\n{standings}";
         }
     }
 }

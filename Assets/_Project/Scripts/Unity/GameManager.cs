@@ -159,11 +159,15 @@ namespace CruceChaos.Unity
             _config      = GameModes.DefaultConfig(mode, ruleOptions);
             _playerCount = _config.PlayerCount;
 
-            // Tell the HUD / match tracker about the team layout. 1v1 keeps the
-            // familiar "You" / "AI"; 2v2 shows "Your Team" / "Opponents".
-            _scoreHUD?.SetTeamPlay(_config.IsTeamPlay);
+            // Build the scoreboard: one slot per team, in team-index order. The
+            // slot name is the team's label — for individual play it's the seat
+            // name ("You" / "Opponent A"); for 2v2 it's "Your Team"/"Opponents".
             int[] teams = _config.TeamOfSeat.Distinct().OrderBy(t => t).ToArray();
-            _matchManager?.SetTeams(teams, _config.TeamOfSeat[0], _config.IsTeamPlay);
+            var slots = teams.Select(t => new ScoreHUD.Slot(t, TeamDisplayName(t))).ToArray();
+            _scoreHUD?.SetScoreboard(slots);
+            // MatchManager uses the SAME slots/order so its match-score labels
+            // line up with the ScoreHUD's running-score labels.
+            _matchManager?.SetScoreboard(slots, MyTeamIndex());
 
             // Seat 0 = human; every other seat = its own AI controller.
             _players     = new Player[_playerCount];
@@ -190,9 +194,18 @@ namespace CruceChaos.Unity
         {
             if (seat == 0) return "You";
             if (_playerCount == 2) return "AI";
-            // 2v2 seat layout: 0 = you, 2 = your partner, 1 & 3 = opponents.
-            if (seat == 2) return "Partner";
-            return seat == 1 ? "Opponent A" : "Opponent B";
+
+            // 2v2 (team play): seat 2 is the human's partner across the table;
+            // seats 1 & 3 are the opponents.
+            if (_config != null && _config.IsTeamPlay)
+            {
+                if (seat == 2) return "Partner";
+                return seat == 1 ? "Opponent A" : "Opponent B";
+            }
+
+            // Individual play (1v1v1, 4-player free-for-all): every non-human
+            // seat is an independent opponent, labelled A, B, C in seat order.
+            return $"Opponent {(char)('A' + seat - 1)}";
         }
 
         private int _roundNumber = 0;
@@ -252,8 +265,9 @@ namespace CruceChaos.Unity
             _scoreHUD?.HideResult();
             _scoreHUD?.SetTrump(null);
             _scoreHUD?.SetDeckCount(_deck.Count);
-            _scoreHUD?.SetHumanPoints(0);
-            _scoreHUD?.SetAIPoints(0);
+            // Reset every team's running score label to 0 for the new round.
+            foreach (int t in _config.TeamOfSeat.Distinct())
+                _scoreHUD?.SetTeamPoints(t, 0);
 
             ApplyAutoSort();
             RebuildHumanHand();
@@ -287,37 +301,21 @@ namespace CruceChaos.Unity
             RoundResult   result = BuildRoundResult(units);
             IReadOnlyDictionary<int, int> deltas = _scorer.ScoreRound(result);
 
-            int myTeam = MyTeamIndex();
-
-            // Collapse the N teams into the two display slots the current HUD
-            // uses: the human's team, and everyone else pooled. (This mapping is
-            // replaced by the N-player HUD in the next step; 1v1 and 2v2 are both
-            // exactly two teams, so it is lossless for them.)
-            int myTotal  = units.Where(u => u.TeamIndex == myTeam).Sum(u => u.TotalPoints);
-            int oppTotal = units.Where(u => u.TeamIndex != myTeam).Sum(u => u.TotalPoints);
-            int myCardPts  = units.Where(u => u.TeamIndex == myTeam).Sum(u => u.CapturedPoints);
-            int oppCardPts = units.Where(u => u.TeamIndex != myTeam).Sum(u => u.CapturedPoints);
-            int myDelta  = deltas.Where(kv => kv.Key == myTeam).Sum(kv => kv.Value);
-            int oppDelta = deltas.Where(kv => kv.Key != myTeam).Sum(kv => kv.Value);
-
-            bool myTeamWonBid = result.BidWinnerTeam == myTeam;
-
             if (_matchManager != null)
             {
                 // Hand the Core-computed deltas straight to the match tracker.
                 _matchManager.ReportRoundResult(deltas);
 
-                _scoreHUD?.ShowResult(
-                    humanCardPts:    myCardPts,
-                    aiCardPts:       oppCardPts,
-                    humanTotal:      myTotal,
-                    aiTotal:         oppTotal,
-                    winningBid:      _winningBid,
-                    humanWonBid:     myTeamWonBid,
-                    humanVPDelta:    myDelta,
-                    aiVPDelta:       oppDelta,
-                    humanMatchScore: _matchManager.TeamScore(myTeam),
-                    aiMatchScore:    _matchManager.OpponentsScore(myTeam));
+                // Build one result-banner row per team, in team-index order.
+                int[] teams = _config.TeamOfSeat.Distinct().OrderBy(t => t).ToArray();
+                var rows = teams.Select(t => new ScoreHUD.ResultRow(
+                    teamIndex:   t,
+                    totalPoints: units.Where(u => u.TeamIndex == t).Sum(u => u.TotalPoints),
+                    vpDelta:     deltas.TryGetValue(t, out int d) ? d : 0,
+                    matchScore:  _matchManager.TeamScore(t),
+                    wonBid:      result.BidWinnerTeam == t)).ToArray();
+
+                _scoreHUD?.ShowResult(rows, _winningBid);
 
                 // Wait so the player can read the result.
                 yield return new WaitForSeconds(3f);
@@ -329,7 +327,16 @@ namespace CruceChaos.Unity
             }
             else
             {
-                _scoreHUD?.ShowResult(myTotal, oppTotal);
+                // No match manager: still show a per-team banner with zero match
+                // scores and no deltas.
+                int[] teams = _config.TeamOfSeat.Distinct().OrderBy(t => t).ToArray();
+                var rows = teams.Select(t => new ScoreHUD.ResultRow(
+                    teamIndex:   t,
+                    totalPoints: units.Where(u => u.TeamIndex == t).Sum(u => u.TotalPoints),
+                    vpDelta:     deltas.TryGetValue(t, out int d) ? d : 0,
+                    matchScore:  0,
+                    wonBid:      result.BidWinnerTeam == t)).ToArray();
+                _scoreHUD?.ShowResult(rows, _winningBid);
             }
         }
 
@@ -337,6 +344,23 @@ namespace CruceChaos.Unity
 
         /// <summary>The team index the human (seat 0) belongs to.</summary>
         private int MyTeamIndex() => _config.TeamOfSeat[0];
+
+        /// <summary>
+        /// Display name for a whole team (scoreboard slot). In individual play a
+        /// team is one seat, so its name is that seat's name ("You" / "Opponent
+        /// A"). In 2v2 the two teams are the human's side and the opponents'.
+        /// </summary>
+        private string TeamDisplayName(int team)
+        {
+            if (_config.IsTeamPlay)
+                return team == MyTeamIndex() ? "Your Team" : "Opponents";
+
+            // Individual: find the (single) seat on this team and use its name.
+            for (int seat = 0; seat < _playerCount; seat++)
+                if (_config.TeamOfSeat[seat] == team)
+                    return SeatName(seat);
+            return $"Team {team}";
+        }
 
         /// <summary>
         /// Builds the per-team <see cref="ScoringUnit"/>s from this round's
@@ -820,18 +844,17 @@ namespace CruceChaos.Unity
             bool myTeamWon = _config.TeamOfSeat[_leaderIndex] == myTeam;
             _trickAreaView?.FlashWinner(myTeamWon);
 
-            // Live running totals for the HUD (captured + marriage), summed from
-            // the participants by team. This is display only; the authoritative
-            // round scoring happens at round end via Core's scorer.
-            int myRunning  = 0, oppRunning = 0;
+            // Update every team's running total on the HUD (captured + marriage).
+            // Display only; authoritative round scoring happens at round end.
+            var running = new Dictionary<int, int>();
             for (int s = 0; s < _playerCount; s++)
             {
+                int team = _config.TeamOfSeat[s];
                 int seatPts = _participants[s].CapturedPoints + _participants[s].MarriagePoints;
-                if (_config.TeamOfSeat[s] == myTeam) myRunning += seatPts;
-                else                                 oppRunning += seatPts;
+                running[team] = (running.TryGetValue(team, out int v) ? v : 0) + seatPts;
             }
-            _scoreHUD?.SetHumanPoints(myRunning);
-            _scoreHUD?.SetAIPoints(oppRunning);
+            foreach (var kv in running)
+                _scoreHUD?.SetTeamPoints(kv.Key, kv.Value);
 
             Debug.Log($"[Cruce] Trick {_trickCount}: {winner.Player.Name} wins {pts} pts.");
         }
@@ -1039,10 +1062,28 @@ namespace CruceChaos.Unity
         private float SeatFanRotation(int seat)
         {
             if (_playerCount == 2) return 0f;   // 1v1: opponent across the top.
+
+            // 2v2 (team play): left / top (partner) / right.
+            if (_config != null && _config.IsTeamPlay)
+            {
+                switch (seat)
+                {
+                    case 1:  return  90f;  // left
+                    case 2:  return   0f;  // top (partner)
+                    case 3:  return -90f;  // right
+                    default: return   0f;
+                }
+            }
+
+            // 1v1v1 (individual, 2 opponents): one on the left, one on the right.
+            if (_playerCount == 3)
+                return seat == 1 ? 90f : -90f;   // seat 1 left, seat 2 right
+
+            // 4-player free-for-all (individual): left / top / right.
             switch (seat)
             {
                 case 1:  return  90f;  // left
-                case 2:  return   0f;  // top (partner)
+                case 2:  return   0f;  // top
                 case 3:  return -90f;  // right
                 default: return   0f;
             }

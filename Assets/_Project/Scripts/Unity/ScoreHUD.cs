@@ -21,8 +21,10 @@ namespace CruceChaos.Unity
     public class ScoreHUD : MonoBehaviour
     {
         [Header("Score Labels")]
-        [SerializeField] private TextMeshProUGUI _humanPointsLabel;
-        [SerializeField] private TextMeshProUGUI _aiPointsLabel;
+        [Tooltip("One running-score label per team/player, in team-index order. " +
+                 "Wire as many as the mode needs: 2 for 1v1 and 2v2, 3 for " +
+                 "1v1v1, 4 for free-for-all. Extra labels are hidden automatically.")]
+        [SerializeField] private TextMeshProUGUI[] _scoreLabels;
 
         [Header("Draw Pile")]
         [SerializeField] private TextMeshProUGUI _deckLabel;
@@ -42,36 +44,68 @@ namespace CruceChaos.Unity
         [Tooltip("A label shown centre-screen for bid winner / trump announcements. Stays until ClearPersistentInfo() is called.")]
         [SerializeField] private TextMeshProUGUI _persistentInfoLabel;
 
-        // ---- Team-play wording ------------------------------------------------
+        // ---- Scoreboard model -------------------------------------------------
 
         /// <summary>
-        /// Whether to use team wording. Set by <c>GameManager</c> at startup:
-        /// 1v1 keeps "You" / "AI", 2v2 shows "Your Team" / "Opponents". The two
-        /// score slots always mean "the human's side" and "the opposing side",
-        /// so in 2v2 they carry the human's TEAM total vs the opponents' total.
+        /// Describes one scoreboard slot: a team and the name to show for it.
+        /// GameManager builds one per team at startup ("You", "Opponent A",
+        /// "Your Team", ...), in team-index order.
         /// </summary>
-        private bool _isTeamPlay;
+        public struct Slot
+        {
+            public int TeamIndex;
+            public string Name;
 
-        /// <summary>Tell the HUD whether to use team wording. Call once at startup.</summary>
-        public void SetTeamPlay(bool isTeamPlay) => _isTeamPlay = isTeamPlay;
+            public Slot(int teamIndex, string name)
+            {
+                TeamIndex = teamIndex;
+                Name      = name;
+            }
+        }
 
-        private string MyLabel  => _isTeamPlay ? "Your Team" : "You";
-        private string OppLabel => _isTeamPlay ? "Opponents" : "AI";
+        private Slot[] _slots = System.Array.Empty<Slot>();
+        // team index -> position in _slots / _scoreLabels
+        private readonly System.Collections.Generic.Dictionary<int, int> _slotOfTeam
+            = new System.Collections.Generic.Dictionary<int, int>();
+
+        /// <summary>
+        /// Registers the scoreboard slots (one per team) and binds them to the
+        /// serialized labels by position. Call once at startup. Labels beyond
+        /// the slot count are hidden; slots beyond the label count simply have
+        /// no on-screen readout.
+        /// </summary>
+        public void SetScoreboard(Slot[] slots)
+        {
+            _slots = slots ?? System.Array.Empty<Slot>();
+            _slotOfTeam.Clear();
+            for (int i = 0; i < _slots.Length; i++)
+                _slotOfTeam[_slots[i].TeamIndex] = i;
+
+            if (_scoreLabels != null)
+            {
+                for (int i = 0; i < _scoreLabels.Length; i++)
+                {
+                    if (_scoreLabels[i] == null) continue;
+                    bool used = i < _slots.Length;
+                    _scoreLabels[i].gameObject.SetActive(used);
+                    if (used) _scoreLabels[i].text = $"{_slots[i].Name}: 0";
+                }
+            }
+        }
+
+        /// <summary>The display name registered for a team (empty if unknown).</summary>
+        private string NameOfTeam(int teamIndex)
+            => _slotOfTeam.TryGetValue(teamIndex, out int i) ? _slots[i].Name : $"T{teamIndex}";
 
         // ---- Public API -------------------------------------------------------
 
-        /// <summary>Updates the human side's captured card-point total.</summary>
-        public void SetHumanPoints(int pts)
+        /// <summary>Updates one team's running captured-point total on the HUD.</summary>
+        public void SetTeamPoints(int teamIndex, int pts)
         {
-            if (_humanPointsLabel != null)
-                _humanPointsLabel.text = _isTeamPlay ? $"Your Team: {pts}" : $"Your Points: {pts}";
-        }
-
-        /// <summary>Updates the opposing side's captured card-point total.</summary>
-        public void SetAIPoints(int pts)
-        {
-            if (_aiPointsLabel != null)
-                _aiPointsLabel.text = $"{OppLabel} Points: {pts}";
+            if (_scoreLabels == null) return;
+            if (!_slotOfTeam.TryGetValue(teamIndex, out int i)) return;
+            if (i < _scoreLabels.Length && _scoreLabels[i] != null)
+                _scoreLabels[i].text = $"{_slots[i].Name}: {pts}";
         }
 
         /// <summary>Updates the draw pile card count label.</summary>
@@ -107,59 +141,61 @@ namespace CruceChaos.Unity
         }
 
         /// <summary>
-        /// Shows the end-of-round result banner with full scoring breakdown:
-        /// card points, bid outcome, VP delta for each side, and running match scores.
+        /// One team's end-of-round figures for the result banner.
         /// </summary>
-        public void ShowResult(
-            int  humanCardPts,   int aiCardPts,
-            int  humanTotal,     int aiTotal,
-            int? winningBid,     bool humanWonBid,
-            int  humanVPDelta,   int aiVPDelta,
-            int  humanMatchScore, int aiMatchScore)
+        public struct ResultRow
         {
-            if (_resultBanner == null) return;
-            _resultBanner.SetActive(true);
+            public int TeamIndex;
+            public int TotalPoints;   // captured + marriage this round
+            public int VPDelta;       // match-score change this round
+            public int MatchScore;    // running match score after this round
+            public bool WonBid;       // true if this team was the bidding side
 
-            if (_resultLabel == null) return;
-
-            // ── Line 1: card points ──────────────────────────────────────────
-            string pointsLine = $"{MyLabel}: {humanTotal} pts     {OppLabel}: {aiTotal} pts";
-
-            // ── Line 2: bid outcome ──────────────────────────────────────────
-            string bidLine = "";
-            if (winningBid.HasValue)
+            public ResultRow(int teamIndex, int totalPoints, int vpDelta, int matchScore, bool wonBid)
             {
-                int bid         = winningBid.Value;
-                string bidder   = humanWonBid ? MyLabel : OppLabel;
-                int bidderTotal = humanWonBid ? humanTotal : aiTotal;
-                int bidderVP    = StandardRoundScorer.VictoryPointsFor(bidderTotal);
-                bool made       = bidderVP >= bid;
-                string outcome  = made ? "made" : "missed";
-                bidLine = $"Bid: {bidder} bid {bid} — {outcome} ({bidderVP} VP earned)";
+                TeamIndex   = teamIndex;
+                TotalPoints = totalPoints;
+                VPDelta     = vpDelta;
+                MatchScore  = matchScore;
+                WonBid      = wonBid;
             }
-
-            // ── Line 3: VP gained ────────────────────────────────────────────
-            string humanDeltaStr = humanVPDelta >= 0 ? $"+{humanVPDelta}" : $"{humanVPDelta}";
-            string aiDeltaStr    = aiVPDelta    >= 0 ? $"+{aiVPDelta}"    : $"{aiVPDelta}";
-            string vpLine        = $"VP:  {MyLabel} {humanDeltaStr}     {OppLabel} {aiDeltaStr}";
-
-            // ── Line 4: running match score ──────────────────────────────────
-            string standingsLine = $"Match:  {MyLabel} {humanMatchScore}  –  {OppLabel} {aiMatchScore}";
-
-            _resultLabel.text = string.Join("\n", pointsLine, bidLine, vpLine, standingsLine);
         }
 
-        /// <summary>Simple overload — used when match manager is not assigned.</summary>
-        public void ShowResult(int humanPts, int aiPts)
+        /// <summary>
+        /// Shows the end-of-round result banner for any number of teams: one
+        /// block per team (points, VP change, running match score) plus the bid
+        /// outcome. Rows are shown in the order given.
+        /// </summary>
+        public void ShowResult(ResultRow[] rows, int? winningBid)
         {
             if (_resultBanner == null) return;
             _resultBanner.SetActive(true);
-            if (_resultLabel != null)
-                _resultLabel.text = humanPts > aiPts
-                    ? $"{MyLabel} win!\n{humanPts} – {aiPts}"
-                    : aiPts > humanPts
-                        ? $"{OppLabel} win!\n{humanPts} – {aiPts}"
-                        : $"Draw!\n{humanPts} – {aiPts}";
+            if (_resultLabel == null || rows == null) return;
+
+            var lines = new System.Collections.Generic.List<string>();
+
+            // One line per team: "Name: 95 pts  (+2 VP)  match 7"
+            foreach (ResultRow r in rows)
+            {
+                string delta = r.VPDelta >= 0 ? $"+{r.VPDelta}" : $"{r.VPDelta}";
+                lines.Add($"{NameOfTeam(r.TeamIndex)}: {r.TotalPoints} pts   ({delta} VP)   match {r.MatchScore}");
+            }
+
+            // Bid outcome line.
+            if (winningBid.HasValue)
+            {
+                int bid = winningBid.Value;
+                foreach (ResultRow r in rows)
+                {
+                    if (!r.WonBid) continue;
+                    int vp = StandardRoundScorer.VictoryPointsFor(r.TotalPoints);
+                    string outcome = vp >= bid ? "made" : "missed";
+                    lines.Add($"Bid: {NameOfTeam(r.TeamIndex)} bid {bid} — {outcome} ({vp} VP earned)");
+                    break;
+                }
+            }
+
+            _resultLabel.text = string.Join("\n", lines);
         }
 
         /// <summary>

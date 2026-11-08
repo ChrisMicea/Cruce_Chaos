@@ -25,6 +25,9 @@ namespace CruceChaos.Unity
                  "Both 2v2 buttons load this same scene.")]
         [SerializeField] private string _twoVsTwoScene = "2v2";
 
+        [Tooltip("Exact name of the 1v1v1 game scene (must match the scene filename).")]
+        [SerializeField] private string _oneVsOneVsOneScene = "1v1v1";
+
         public void OnOneVsOneClicked()
         {
             GameSelection.SelectedMode = GameMode.OneVsOne;
@@ -46,6 +49,16 @@ namespace CruceChaos.Unity
         {
             GameSelection.SelectedMode = GameMode.TwoVsTwoDraft;
             SceneManager.LoadScene(_twoVsTwoScene);
+        }
+
+        /// <summary>
+        /// 1v1v1: three independent players (free-for-all). 7 cards each, the
+        /// 3-card leftover revealed and drafted one apiece after trump.
+        /// </summary>
+        public void OnOneVsOneVsOneClicked()
+        {
+            GameSelection.SelectedMode = GameMode.OneVsOneVsOne;
+            SceneManager.LoadScene(_oneVsOneVsOneScene);
         }
 
         public void OnQuitClicked()
