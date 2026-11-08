@@ -22,13 +22,21 @@ namespace CruceChaos.Core.Game.Scoring
         /// <summary>Card points needed per victory point.</summary>
         public const int PointsPerVictoryPoint = 33;
 
+        /// <summary>
+        /// Victory points earned from a total of card + marriage points: integer
+        /// division by <see cref="PointsPerVictoryPoint"/> (0–32 → 0, 33–65 → 1,
+        /// ...). The single place this conversion is defined, so UI and logs can
+        /// display the same number the scorer uses instead of re-deriving it.
+        /// </summary>
+        public static int VictoryPointsFor(int totalPoints) => totalPoints / PointsPerVictoryPoint;
+
         public IReadOnlyDictionary<int, int> ScoreRound(RoundResult result)
         {
             var deltas = new Dictionary<int, int>();
 
             foreach (ScoringUnit unit in result.ScoringUnits)
             {
-                int earned = unit.TotalPoints / PointsPerVictoryPoint;
+                int earned = VictoryPointsFor(unit.TotalPoints);
                 bool isBiddingTeam = unit.TeamIndex == result.BidWinnerTeam;
 
                 int delta;

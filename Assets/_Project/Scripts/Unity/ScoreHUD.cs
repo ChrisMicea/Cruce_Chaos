@@ -1,6 +1,7 @@
 using UnityEngine;
 using TMPro;
 using CruceChaos.Core.Cards;
+using CruceChaos.Core.Game.Scoring;
 
 namespace CruceChaos.Unity
 {
@@ -131,7 +132,7 @@ namespace CruceChaos.Unity
                 int bid         = winningBid.Value;
                 string bidder   = humanWonBid ? MyLabel : OppLabel;
                 int bidderTotal = humanWonBid ? humanTotal : aiTotal;
-                int bidderVP    = bidderTotal / 33;
+                int bidderVP    = StandardRoundScorer.VictoryPointsFor(bidderTotal);
                 bool made       = bidderVP >= bid;
                 string outcome  = made ? "made" : "missed";
                 bidLine = $"Bid: {bidder} bid {bid} — {outcome} ({bidderVP} VP earned)";

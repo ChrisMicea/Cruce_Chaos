@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 using UnityEngine;
+using CruceChaos.Core.Game.Scoring;
 
 namespace CruceChaos.Unity
 {
@@ -135,16 +136,15 @@ namespace CruceChaos.Unity
         {
             WriteLine($"│");
             WriteLine($"│  Round {_roundNumber} Result:");
-            WriteLine($"│    You : {humanCardPts} card pts + {humanMarriagePts} marriage = {humanTotal} total → {humanCardPts / 33 + humanMarriagePts / 33} raw VP");
-            WriteLine($"│    AI  : {aiCardPts} card pts + {aiMarriagePts} marriage = {aiTotal} total → {aiCardPts / 33 + aiMarriagePts / 33} raw VP");
+            WriteLine($"│    You : {humanCardPts} card pts + {humanMarriagePts} marriage = {humanTotal} total → {StandardRoundScorer.VictoryPointsFor(humanTotal)} raw VP");
+            WriteLine($"│    AI  : {aiCardPts} card pts + {aiMarriagePts} marriage = {aiTotal} total → {StandardRoundScorer.VictoryPointsFor(aiTotal)} raw VP");
 
             if (winningBid.HasValue)
             {
                 string bidder = humanWonBid ? "You" : "AI";
                 WriteLine($"│    Bid : {bidder} bid {winningBid.Value}");
-                string outcome = humanWonBid
-                    ? (humanTotal / 33 >= winningBid.Value ? "made ✓" : "missed ✗")
-                    : (aiTotal    / 33 >= winningBid.Value ? "made ✓" : "missed ✗");
+                int bidderVP   = StandardRoundScorer.VictoryPointsFor(humanWonBid ? humanTotal : aiTotal);
+                string outcome = bidderVP >= winningBid.Value ? "made ✓" : "missed ✗";
                 WriteLine($"│    Contract: {outcome}");
             }
 

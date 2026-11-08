@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using TMPro;
@@ -5,15 +7,16 @@ using TMPro;
 namespace CruceChaos.Unity
 {
     /// <summary>
-    /// Tracks VP scores across rounds and decides when the match is over.
+    /// Tracks per-team match VP across rounds and decides when the match is over.
     ///
-    /// Scoring (mirrors StandardRoundScorer):
-    ///   - Both teams earn VP = their totalPoints / 33 independently.
-    ///   - The bidding team: if they earned >= bid → keep earned VP;
-    ///     if they missed → subtract the bid instead.
-    ///   - Non-bidding team: always keeps earned VP.
+    /// This class does NOT compute scoring — it only accumulates the per-team
+    /// deltas handed to it (produced by Core's StandardRoundScorer) and applies
+    /// the match-end rule: the leading team is at or past the target AND at
+    /// least 2 clear of the runner-up (mirrors Core's MatchEngine.IsMatchOver).
     ///
-    /// Match ends when either player reaches _targetMatchPoints AND leads by >= 2.
+    /// Scores are keyed by team index, so this works for any player/team count.
+    /// The two serialized labels show the human's team and the opposing side
+    /// (for 1v1 / 2v2); the N-player scoreboard is layered on in a later step.
     /// </summary>
     public class MatchManager : MonoBehaviour
     {
@@ -31,27 +34,18 @@ namespace CruceChaos.Unity
         [Header("Scene Navigation")]
         [SerializeField] private string _mainMenuScene = "Main Menu";
 
-        private int _humanMatchScore;
-        private int _aiMatchScore;
+        /// <summary>Per-team cumulative match score, keyed by team index.</summary>
+        private readonly Dictionary<int, int> _teamScores = new Dictionary<int, int>();
+
+        /// <summary>The team index the human belongs to (for win/lose wording).</summary>
+        private int _myTeam;
 
         /// <summary>
         /// Whether this match is team play (2v2) rather than individual (1v1).
-        /// Set by <c>GameManager</c> at startup. Only affects the HUD wording:
-        /// individual play keeps the familiar "You" / "AI" labels, team play
-        /// shows "Your Team" / "Opponents". The scoring itself is unchanged —
-        /// the "human" side is simply the human's TEAM in 2v2.
+        /// Only affects HUD wording: individual play keeps "You" / "AI", team
+        /// play shows "Your Team" / "Opponents".
         /// </summary>
         private bool _isTeamPlay;
-
-        /// <summary>
-        /// Tell the HUD whether to use team wording. Call once before the first
-        /// round. Safe to call with false (the default) for 1v1.
-        /// </summary>
-        public void SetTeamPlay(bool isTeamPlay)
-        {
-            _isTeamPlay = isTeamPlay;
-            RefreshLabels();
-        }
 
         private string MyLabel  => _isTeamPlay ? "Your Team" : "You";
         private string OppLabel => _isTeamPlay ? "Opponents" : "AI";
@@ -59,71 +53,56 @@ namespace CruceChaos.Unity
         /// <summary>True after the match-over condition is reached.</summary>
         public bool IsMatchOver { get; private set; }
 
-        /// <summary>Current human VP score for display.</summary>
-        public int HumanMatchScore => _humanMatchScore;
+        // ── Setup (called by GameManager at startup) ─────────────────────────
 
-        /// <summary>Current AI VP score for display.</summary>
-        public int AIMatchScore => _aiMatchScore;
-
-        private void Start()
+        /// <summary>
+        /// Registers the teams in this match and which one is the human's, so
+        /// scores can be tracked per team and the match-over wording knows who
+        /// "you" are. Call once before the first round.
+        /// </summary>
+        public void SetTeams(IEnumerable<int> teamIndices, int myTeam, bool isTeamPlay)
         {
-            _humanMatchScore = 0;
-            _aiMatchScore    = 0;
-            IsMatchOver      = false;
+            _teamScores.Clear();
+            foreach (int t in teamIndices)
+                _teamScores[t] = 0;
+
+            _myTeam     = myTeam;
+            _isTeamPlay = isTeamPlay;
+            IsMatchOver = false;
             RefreshLabels();
             if (_matchOverPanel != null) _matchOverPanel.SetActive(false);
         }
 
-        // ── Public API ─────────────────────────────────────────────────────────
+        // ── Queries ──────────────────────────────────────────────────────────
+
+        /// <summary>Current match score of a specific team (0 if unknown).</summary>
+        public int TeamScore(int team)
+            => _teamScores.TryGetValue(team, out int s) ? s : 0;
+
+        /// <summary>Sum of every team's score except <paramref name="team"/>.</summary>
+        public int OpponentsScore(int team)
+            => _teamScores.Where(kv => kv.Key != team).Sum(kv => kv.Value);
+
+        // ── Public API ───────────────────────────────────────────────────────
 
         /// <summary>
-        /// Call at the end of each round.
-        ///
-        /// humanTotalPts / aiTotalPts  = captured card pts + marriage pts
-        /// winningBid                  = the bid the winner placed (null if no bid info)
-        /// humanWonBid                 = true if the human was the bidding team
+        /// Call at the end of each round with Core's per-team VP deltas
+        /// (StandardRoundScorer output). This class simply accumulates them —
+        /// it does not recompute the formula.
         /// </summary>
-        public void ReportRoundResult(
-            int  humanTotalPts,
-            int  aiTotalPts,
-            int? winningBid    = null,
-            bool humanWonBid   = false)
+        public void ReportRoundResult(IReadOnlyDictionary<int, int> teamDeltas)
         {
-            int humanEarned = humanTotalPts / 33;
-            int aiEarned    = aiTotalPts    / 33;
-
-            int humanDelta;
-            int aiDelta;
-
-            if (winningBid.HasValue)
+            foreach (KeyValuePair<int, int> kv in teamDeltas)
             {
-                int bid = winningBid.Value;
-                if (humanWonBid)
-                {
-                    // Human is the bidding team.
-                    humanDelta = humanEarned >= bid ? humanEarned : -bid;
-                    aiDelta    = aiEarned;
-                }
-                else
-                {
-                    // AI is the bidding team.
-                    aiDelta    = aiEarned >= bid ? aiEarned : -bid;
-                    humanDelta = humanEarned;
-                }
-            }
-            else
-            {
-                // No bid info — fall back to simple earned VP.
-                humanDelta = humanEarned;
-                aiDelta    = aiEarned;
+                if (!_teamScores.ContainsKey(kv.Key))
+                    _teamScores[kv.Key] = 0;
+                _teamScores[kv.Key] += kv.Value;
             }
 
-            _humanMatchScore += humanDelta;
-            _aiMatchScore    += aiDelta;
-
-            Debug.Log($"[Match] Human +{humanDelta} ({humanTotalPts} pts) / " +
-                      $"AI +{aiDelta} ({aiTotalPts} pts). " +
-                      $"Standings: {_humanMatchScore} – {_aiMatchScore}");
+            string standings = string.Join("  |  ",
+                _teamScores.OrderByDescending(kv => kv.Value)
+                           .Select(kv => $"T{kv.Key}: {kv.Value}"));
+            Debug.Log($"[Match] Round applied. Standings: {standings}");
 
             RefreshLabels();
             CheckMatchOver();
@@ -131,9 +110,9 @@ namespace CruceChaos.Unity
 
         public void ResetMatch()
         {
-            _humanMatchScore = 0;
-            _aiMatchScore    = 0;
-            IsMatchOver      = false;
+            foreach (int t in _teamScores.Keys.ToList())
+                _teamScores[t] = 0;
+            IsMatchOver = false;
             RefreshLabels();
             if (_matchOverPanel != null) _matchOverPanel.SetActive(false);
         }
@@ -143,43 +122,49 @@ namespace CruceChaos.Unity
             SceneManager.LoadScene(_mainMenuScene);
         }
 
-        // ── Private ────────────────────────────────────────────────────────────
+        // ── Private ──────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Match ends when the leading team is at/past the target AND at least 2
+        /// clear of the runner-up (a 1-point gap keeps play going). Same rule as
+        /// Core's MatchEngine.IsMatchOver, generalized to any number of teams.
+        /// </summary>
         private void CheckMatchOver()
         {
-            int hi  = Mathf.Max(_humanMatchScore, _aiMatchScore);
-            int lo  = Mathf.Min(_humanMatchScore, _aiMatchScore);
-            bool targetReached = hi >= _targetMatchPoints;
-            bool clearLead     = (hi - lo) >= 2;
+            if (_teamScores.Count == 0) return;
 
-            if (targetReached && clearLead)
+            var ranked = _teamScores.OrderByDescending(kv => kv.Value).ToList();
+            int leaderScore   = ranked[0].Value;
+            int runnerUpScore = ranked.Count > 1 ? ranked[1].Value : int.MinValue;
+
+            if (leaderScore >= _targetMatchPoints && (leaderScore - runnerUpScore) >= 2)
             {
                 IsMatchOver = true;
-                ShowMatchOver();
+                ShowMatchOver(ranked[0].Key);
             }
         }
 
         private void RefreshLabels()
         {
             if (_humanMatchScoreLabel != null)
-                _humanMatchScoreLabel.text = $"{MyLabel}: {_humanMatchScore}";
+                _humanMatchScoreLabel.text = $"{MyLabel}: {TeamScore(_myTeam)}";
             if (_aiMatchScoreLabel != null)
-                _aiMatchScoreLabel.text = $"{OppLabel}: {_aiMatchScore}";
+                _aiMatchScoreLabel.text = $"{OppLabel}: {OpponentsScore(_myTeam)}";
         }
 
-        private void ShowMatchOver()
+        private void ShowMatchOver(int winningTeam)
         {
             if (_matchOverPanel == null) return;
             _matchOverPanel.SetActive(true);
 
             if (_matchOverLabel != null)
             {
-                bool humanWins = _humanMatchScore > _aiMatchScore;
+                bool humanWins = winningTeam == _myTeam;
                 string winner  = humanWins
                     ? (_isTeamPlay ? "Your team wins" : "You win")
                     : (_isTeamPlay ? "Opponents win"  : "AI wins");
                 _matchOverLabel.text =
-                    $"{winner} the match!\n{_humanMatchScore} – {_aiMatchScore}";
+                    $"{winner} the match!\n{TeamScore(_myTeam)} – {OpponentsScore(_myTeam)}";
             }
         }
     }

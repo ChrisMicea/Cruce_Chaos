@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using CruceChaos.Core.Cards;
@@ -115,6 +116,12 @@ namespace CruceChaos.Unity
         private MatchConfig         _config;
         private RoundParticipant[]  _participants;      // one per seat
         private LegalMoveEvaluator  _legalMoveEvaluator;
+
+        // Core's round scorer — the single source of truth for VP deltas. The
+        // Unity layer builds a RoundResult and asks this; it never recomputes
+        // the formula itself.
+        private readonly Core.Game.Scoring.IRoundScorer _scorer
+            = new Core.Game.Scoring.StandardRoundScorer();
         private Deck                _deck;
         private Trick               _currentTrick;
         private Suit?               _trump;
@@ -152,10 +159,11 @@ namespace CruceChaos.Unity
             _config      = GameModes.DefaultConfig(mode, ruleOptions);
             _playerCount = _config.PlayerCount;
 
-            // Tell the HUD / match tracker whether to use team wording. 1v1 keeps
-            // the familiar "You" / "AI"; 2v2 shows "Your Team" / "Opponents".
+            // Tell the HUD / match tracker about the team layout. 1v1 keeps the
+            // familiar "You" / "AI"; 2v2 shows "Your Team" / "Opponents".
             _scoreHUD?.SetTeamPlay(_config.IsTeamPlay);
-            _matchManager?.SetTeamPlay(_config.IsTeamPlay);
+            int[] teams = _config.TeamOfSeat.Distinct().OrderBy(t => t).ToArray();
+            _matchManager?.SetTeams(teams, _config.TeamOfSeat[0], _config.IsTeamPlay);
 
             // Seat 0 = human; every other seat = its own AI controller.
             _players     = new Player[_playerCount];
@@ -272,62 +280,44 @@ namespace CruceChaos.Unity
             // 3. Play all tricks
             yield return StartCoroutine(TrickLoop());
 
-            // 4. Score — team based. "Your team" is the team containing seat 0
-            // (the human); "opponents" is every other team pooled together. In
-            // 1v1 each team is one seat, so this reduces to human vs AI exactly.
-            int humanPts = TeamTotalPoints(MyTeamIndex());
-            int aiPts    = OpponentsTotalPoints();
+            // 4. Score — delegate entirely to Core. Build the per-team scoring
+            // units and a RoundResult, then let StandardRoundScorer compute the
+            // VP deltas. The Unity layer no longer duplicates the formula.
+            ScoringUnit[] units = BuildScoringUnits();
+            RoundResult   result = BuildRoundResult(units);
+            IReadOnlyDictionary<int, int> deltas = _scorer.ScoreRound(result);
 
-            // Did the human's team win the bid?
-            bool myTeamWonBid = _bidWinnerSeat >= 0
-                && _config.TeamOfSeat[_bidWinnerSeat] == MyTeamIndex();
+            int myTeam = MyTeamIndex();
+
+            // Collapse the N teams into the two display slots the current HUD
+            // uses: the human's team, and everyone else pooled. (This mapping is
+            // replaced by the N-player HUD in the next step; 1v1 and 2v2 are both
+            // exactly two teams, so it is lossless for them.)
+            int myTotal  = units.Where(u => u.TeamIndex == myTeam).Sum(u => u.TotalPoints);
+            int oppTotal = units.Where(u => u.TeamIndex != myTeam).Sum(u => u.TotalPoints);
+            int myCardPts  = units.Where(u => u.TeamIndex == myTeam).Sum(u => u.CapturedPoints);
+            int oppCardPts = units.Where(u => u.TeamIndex != myTeam).Sum(u => u.CapturedPoints);
+            int myDelta  = deltas.Where(kv => kv.Key == myTeam).Sum(kv => kv.Value);
+            int oppDelta = deltas.Where(kv => kv.Key != myTeam).Sum(kv => kv.Value);
+
+            bool myTeamWonBid = result.BidWinnerTeam == myTeam;
 
             if (_matchManager != null)
             {
-                // Compute deltas the same way MatchManager does so we can show them.
-                int humanEarned = humanPts / 33;
-                int aiEarned    = aiPts    / 33;
-                int humanDelta;
-                int aiDelta;
+                // Hand the Core-computed deltas straight to the match tracker.
+                _matchManager.ReportRoundResult(deltas);
 
-                if (_winningBid.HasValue)
-                {
-                    int bid = _winningBid.Value;
-                    if (myTeamWonBid) // human's team won the bid
-                    {
-                        humanDelta = humanEarned >= bid ? humanEarned : -bid;
-                        aiDelta    = aiEarned;
-                    }
-                    else // opponents won the bid
-                    {
-                        aiDelta    = aiEarned >= bid ? aiEarned : -bid;
-                        humanDelta = humanEarned;
-                    }
-                }
-                else
-                {
-                    humanDelta = humanEarned;
-                    aiDelta    = aiEarned;
-                }
-
-                // Report to MatchManager first so match scores are updated.
-                _matchManager.ReportRoundResult(
-                    humanPts, aiPts,
-                    winningBid:  _winningBid,
-                    humanWonBid: myTeamWonBid);
-
-                // Show the rich result banner.
                 _scoreHUD?.ShowResult(
-                    humanCardPts:    TeamCapturedPoints(MyTeamIndex()),
-                    aiCardPts:       OpponentsCapturedPoints(),
-                    humanTotal:      humanPts,
-                    aiTotal:         aiPts,
+                    humanCardPts:    myCardPts,
+                    aiCardPts:       oppCardPts,
+                    humanTotal:      myTotal,
+                    aiTotal:         oppTotal,
                     winningBid:      _winningBid,
                     humanWonBid:     myTeamWonBid,
-                    humanVPDelta:    humanDelta,
-                    aiVPDelta:       aiDelta,
-                    humanMatchScore: _matchManager.HumanMatchScore,
-                    aiMatchScore:    _matchManager.AIMatchScore);
+                    humanVPDelta:    myDelta,
+                    aiVPDelta:       oppDelta,
+                    humanMatchScore: _matchManager.TeamScore(myTeam),
+                    aiMatchScore:    _matchManager.OpponentsScore(myTeam));
 
                 // Wait so the player can read the result.
                 yield return new WaitForSeconds(3f);
@@ -339,55 +329,49 @@ namespace CruceChaos.Unity
             }
             else
             {
-                _scoreHUD?.ShowResult(humanPts, aiPts);
+                _scoreHUD?.ShowResult(myTotal, oppTotal);
             }
         }
 
-        // ── Team scoring helpers ──────────────────────────────────────────────
+        // ── Scoring (delegates to Core) ───────────────────────────────────────
 
         /// <summary>The team index the human (seat 0) belongs to.</summary>
         private int MyTeamIndex() => _config.TeamOfSeat[0];
 
-        /// <summary>Captured card points for all seats on the given team.</summary>
-        private int TeamCapturedPoints(int team)
+        /// <summary>
+        /// Builds the per-team <see cref="ScoringUnit"/>s from this round's
+        /// participants and team layout — the same construction RoundEngine does
+        /// internally. One unit per distinct team; each participant joins its
+        /// seat's team unit (so individual play = one member per unit, team play
+        /// pools members). Used to feed Core's scorer.
+        /// </summary>
+        private ScoringUnit[] BuildScoringUnits()
         {
-            int sum = 0;
+            var unitByTeam = new Dictionary<int, ScoringUnit>();
             for (int seat = 0; seat < _playerCount; seat++)
-                if (_config.TeamOfSeat[seat] == team)
-                    sum += _participants[seat].CapturedPoints;
-            return sum;
+            {
+                int team = _config.TeamOfSeat[seat];
+                if (!unitByTeam.TryGetValue(team, out ScoringUnit unit))
+                {
+                    unit = new ScoringUnit(team);
+                    unitByTeam[team] = unit;
+                }
+                unit.AddMember(_participants[seat]);
+            }
+            return unitByTeam.Values.ToArray();
         }
 
-        /// <summary>Captured card points for every seat NOT on the given team.</summary>
-        private int OpponentsCapturedPoints()
+        /// <summary>
+        /// Packages this round's outcome into a Core <see cref="RoundResult"/>
+        /// so Core's <see cref="StandardRoundScorer"/> can compute the VP deltas.
+        /// The Unity layer no longer re-implements the scoring formula.
+        /// </summary>
+        private RoundResult BuildRoundResult(ScoringUnit[] units)
         {
-            int mine = MyTeamIndex();
-            int sum = 0;
-            for (int seat = 0; seat < _playerCount; seat++)
-                if (_config.TeamOfSeat[seat] != mine)
-                    sum += _participants[seat].CapturedPoints;
-            return sum;
-        }
-
-        /// <summary>Total points (captured + marriage) for all seats on a team.</summary>
-        private int TeamTotalPoints(int team)
-        {
-            int sum = 0;
-            for (int seat = 0; seat < _playerCount; seat++)
-                if (_config.TeamOfSeat[seat] == team)
-                    sum += _participants[seat].CapturedPoints + _participants[seat].MarriagePoints;
-            return sum;
-        }
-
-        /// <summary>Total points (captured + marriage) for every opposing seat.</summary>
-        private int OpponentsTotalPoints()
-        {
-            int mine = MyTeamIndex();
-            int sum = 0;
-            for (int seat = 0; seat < _playerCount; seat++)
-                if (_config.TeamOfSeat[seat] != mine)
-                    sum += _participants[seat].CapturedPoints + _participants[seat].MarriagePoints;
-            return sum;
+            int bidWinnerTeam = _bidWinnerSeat >= 0
+                ? _config.TeamOfSeat[_bidWinnerSeat]
+                : -1;
+            return new RoundResult(units, _winningBid, _bidWinnerSeat, bidWinnerTeam, _trump);
         }
 
         // ── Bidding phase ─────────────────────────────────────────────────────
@@ -832,10 +816,22 @@ namespace CruceChaos.Unity
             // "My side won" = the winning seat is on the human's team. Drives the
             // positive/negative winner flash and keeps the HUD meaningful before
             // the team-HUD relabel in a later step.
-            bool myTeamWon = _config.TeamOfSeat[_leaderIndex] == MyTeamIndex();
+            int myTeam = MyTeamIndex();
+            bool myTeamWon = _config.TeamOfSeat[_leaderIndex] == myTeam;
             _trickAreaView?.FlashWinner(myTeamWon);
-            _scoreHUD?.SetHumanPoints(TeamTotalPoints(MyTeamIndex()));
-            _scoreHUD?.SetAIPoints(OpponentsTotalPoints());
+
+            // Live running totals for the HUD (captured + marriage), summed from
+            // the participants by team. This is display only; the authoritative
+            // round scoring happens at round end via Core's scorer.
+            int myRunning  = 0, oppRunning = 0;
+            for (int s = 0; s < _playerCount; s++)
+            {
+                int seatPts = _participants[s].CapturedPoints + _participants[s].MarriagePoints;
+                if (_config.TeamOfSeat[s] == myTeam) myRunning += seatPts;
+                else                                 oppRunning += seatPts;
+            }
+            _scoreHUD?.SetHumanPoints(myRunning);
+            _scoreHUD?.SetAIPoints(oppRunning);
 
             Debug.Log($"[Cruce] Trick {_trickCount}: {winner.Player.Name} wins {pts} pts.");
         }
