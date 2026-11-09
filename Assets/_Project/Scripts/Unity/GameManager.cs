@@ -1000,6 +1000,7 @@ namespace CruceChaos.Unity
                 cv.Initialise(card, sprite, basePos, angleDeg);
                 cv.OnCardClicked += _humanController.HandleCardClicked;
                 cv.OnIllegalClickAttempt += () => _sound?.PlayIllegalMove();
+                cv.SetOrderNumber(i + 1);
                 _humanCardViews.Add(cv);
 
                 // Left cards render under right cards.

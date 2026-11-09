@@ -5438,7 +5438,7 @@ MonoBehaviour:
   _autoSortHighlight: {fileID: 333139761}
   _matchManager: {fileID: 1442495988}
   _gameLogger: {fileID: 0}
-  _keyboardInput: {fileID: 0}
+  _keyboardInput: {fileID: 1442495992}
   _sound: {fileID: 587170820}
   _mainMenuScene: Main Menu
 --- !u!4 &1442495991
