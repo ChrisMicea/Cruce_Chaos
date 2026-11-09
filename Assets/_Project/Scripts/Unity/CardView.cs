@@ -3,6 +3,7 @@ using System.Collections;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
+using TMPro;
 using CruceChaos.Core.Cards;
 
 namespace CruceChaos.Unity
@@ -34,15 +35,20 @@ namespace CruceChaos.Unity
         [SerializeField] private Image _highlightOverlay;
 
         [Header("State Colours")]
-        [SerializeField] private Color _hoverTint    = new Color(1f, 1f, 0.7f, 0.5f);
+        [SerializeField] private Color _hoverTint    = new Color(0.9f, 0.2f, 0.2f, 0.55f); // red
         [SerializeField] private Color _selectedTint = new Color(0.4f, 0.9f, 0.4f, 0.5f);
         [SerializeField] private Color _illegalTint  = new Color(0.3f, 0.3f, 0.3f, 0.5f);
         [SerializeField] private Color _trumpTint    = new Color(1f, 0.85f, 0f, 0.45f); // gold
+        [SerializeField] private Color _cursorTint   = new Color(0.9f, 0.2f, 0.2f, 0.55f); // red
 
         [Header("Animation")]
         [SerializeField] private float _hoverLiftPx    = 20f;
         [SerializeField] private float _selectedLiftPx = 35f;
         [SerializeField] private float _animSpeed      = 10f;
+
+        [Header("Order Label")]
+        [SerializeField] private float _orderFontSize = 36f;
+        [SerializeField] private Color _orderColor    = Color.white;
 
         // ---- Runtime state ---------------------------------------------------
 
@@ -64,15 +70,17 @@ namespace CruceChaos.Unity
         /// </summary>
         public event Action OnIllegalClickAttempt;
 
-        private Button        _button;
-        private RectTransform _rect;
-        private Vector2       _basePosition;
-        private Vector2       _targetPosition;
-        private float         _baseRotationDeg;
-        private bool          _isLegal    = true;
-        private bool          _isSelected = false;
-        private bool          _isHovered  = false;
-        private bool          _isTrump    = false;
+        private Button          _button;
+        private RectTransform   _rect;
+        private Vector2         _basePosition;
+        private Vector2         _targetPosition;
+        private float           _baseRotationDeg;
+        private bool            _isLegal     = true;
+        private bool            _isSelected  = false;
+        private bool            _isHovered   = false;
+        private bool            _isTrump     = false;
+        private bool            _isCursor    = false; // keyboard navigation cursor is on this card
+        private TextMeshProUGUI _orderLabel;
 
         // ---- Unity lifecycle -------------------------------------------------
 
@@ -84,6 +92,44 @@ namespace CruceChaos.Unity
 
             if (_highlightOverlay != null)
                 _highlightOverlay.color = Color.clear;
+
+            CreateOrderLabel();
+        }
+
+        /// <summary>
+        /// Builds a TextMeshPro label at runtime, anchored to the top of the card,
+        /// that shows this card's position number in the fan (1, 2, 3, ...).
+        /// Created in code so no prefab change is required.
+        /// </summary>
+        private void CreateOrderLabel()
+        {
+            var go = new GameObject("OrderLabel", typeof(RectTransform));
+            var labelRect = go.GetComponent<RectTransform>();
+            labelRect.SetParent(transform, false);
+
+            // Anchor to the top edge of the card and sit the label ABOVE it
+            // (outside the card square). Pivot at the label's bottom-centre so
+            // positive Y pushes it clear of the top edge.
+            labelRect.anchorMin = new Vector2(0.5f, 1f);
+            labelRect.anchorMax = new Vector2(0.5f, 1f);
+            labelRect.pivot     = new Vector2(0.5f, 0f);
+            labelRect.sizeDelta = new Vector2(60f, 50f);
+            labelRect.anchoredPosition = new Vector2(0f, 8f);
+
+            _orderLabel = go.AddComponent<TextMeshProUGUI>();
+            _orderLabel.alignment      = TextAlignmentOptions.Center;
+            _orderLabel.fontSize       = _orderFontSize;
+            _orderLabel.color          = _orderColor;
+            _orderLabel.fontStyle      = FontStyles.Bold;
+            _orderLabel.raycastTarget  = false;
+            _orderLabel.text           = string.Empty;
+
+            // A subtle outline so the number is readable over any card art.
+            _orderLabel.outlineWidth = 0.25f;
+            _orderLabel.outlineColor = new Color32(0, 0, 0, 255);
+
+            // Render above the card face and the highlight overlay.
+            go.transform.SetAsLastSibling();
         }
 
         private void Update()
@@ -165,12 +211,41 @@ namespace CruceChaos.Unity
             RecalcTargetPosition();
         }
 
+        /// <summary>
+        /// Sets the 1-based order number shown on top of the card.
+        /// Pass a value &lt;= 0 to hide the label.
+        /// </summary>
+        public void SetOrderNumber(int number)
+        {
+            if (_orderLabel == null) return;
+            _orderLabel.text = number > 0 ? number.ToString() : string.Empty;
+        }
+
+        /// <summary>
+        /// Marks this card as the current keyboard-navigation cursor.
+        /// Shows a blue tint and a small lift (like hover) so the player can see
+        /// which card the arrow keys are pointing at. Does not fire any action.
+        /// </summary>
+        public void SetKeyboardCursor(bool isCursor)
+        {
+            _isCursor = isCursor;
+            RefreshVisuals();
+            RecalcTargetPosition();
+        }
+
         // ---- Pointer handlers -----------------------------------------------
+
+        /// <summary>
+        /// The card the mouse is currently hovering, or null if none.
+        /// Used so keyboard navigation can yield priority to the mouse.
+        /// </summary>
+        public static CardView HoveredCard { get; private set; }
 
         public void OnPointerEnter(PointerEventData eventData)
         {
             if (!_isLegal) return;
             _isHovered = true;
+            HoveredCard = this;
             RefreshVisuals();
             RecalcTargetPosition();
         }
@@ -178,8 +253,15 @@ namespace CruceChaos.Unity
         public void OnPointerExit(PointerEventData eventData)
         {
             _isHovered = false;
+            if (HoveredCard == this) HoveredCard = null;
             RefreshVisuals();
             RecalcTargetPosition();
+        }
+
+        private void OnDisable()
+        {
+            // Guard against a destroyed/disabled card leaving a stale hover ref.
+            if (HoveredCard == this) HoveredCard = null;
         }
 
         /// <summary>
@@ -212,7 +294,9 @@ namespace CruceChaos.Unity
             else if (_isSelected)
                 _highlightOverlay.color = _selectedTint;
             else if (_isHovered)
-                _highlightOverlay.color = _hoverTint;
+                _highlightOverlay.color = _hoverTint;   // mouse takes priority over keyboard
+            else if (_isCursor)
+                _highlightOverlay.color = _cursorTint;
             else if (_isTrump)
                 _highlightOverlay.color = _trumpTint;
             else
@@ -228,7 +312,7 @@ namespace CruceChaos.Unity
 
             if (_isSelected)
                 _targetPosition = _basePosition + liftDir * _selectedLiftPx;
-            else if (_isHovered)
+            else if (_isHovered || _isCursor)
                 _targetPosition = _basePosition + liftDir * _hoverLiftPx;
             else
                 _targetPosition = _basePosition;

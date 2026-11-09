@@ -1197,10 +1197,14 @@ namespace CruceChaos.Unity
 
                 cv.SetBasePosition(new Vector2(x, y));
                 cv.SetBaseRotation(angleDeg);
+                cv.SetOrderNumber(i + 1);
 
                 // Left cards render under right cards — sibling index = position in list.
                 cv.transform.SetSiblingIndex(i);
             }
+
+            // Card list changed — let the keyboard handler re-sync its cursor.
+            _keyboardInput?.SetCardViews(_humanCardViews);
         }
 
         /// <summary>
