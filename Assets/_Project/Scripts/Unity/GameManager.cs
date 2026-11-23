@@ -129,9 +129,9 @@ namespace CruceChaos.Unity
         private bool[]              _humanSeats;
         private int                 _activeHumanSeat;
 
-        // Who last held the device (last human seat that acted). -1 at round
-        // start. Used to decide when the pass-the-device gate fires: only on a
-        // human → DIFFERENT-human handover.
+        // Who last held the device (last human seat that acted). -1 only before
+        // the first round. It carries across round boundaries so a newly opening
+        // player must still receive the device before their hand is rendered.
         private int                 _lastDeviceSeat = -1;
 
         // Convenience accessor for the LOCAL (active) human seat — the UI only
@@ -139,6 +139,47 @@ namespace CruceChaos.Unity
         // churn in the many places that touch the active human's participant/
         // views. Keyed off _activeHumanSeat (0 in the single-human game).
         private RoundParticipant _localParticipant => _participants != null ? _participants[_activeHumanSeat] : null;
+
+        /// <summary>True when two or more seats are controlled by local humans.</summary>
+        private bool HasMultipleHumanSeats
+        {
+            get
+            {
+                if (_humanSeats == null) return false;
+
+                int humanCount = 0;
+                foreach (bool isHuman in _humanSeats)
+                {
+                    if (!isHuman) continue;
+                    humanCount++;
+                    if (humanCount > 1) return true;
+                }
+
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Finds the first human who will act when bidding begins at
+        /// <paramref name="startingSeat"/>. This becomes the pending viewer at
+        /// the beginning of a round, even if one or more AI seats bid first.
+        /// </summary>
+        private int FirstHumanSeatStartingAt(int startingSeat)
+        {
+            if (_humanSeats != null)
+            {
+                for (int offset = 0; offset < _playerCount; offset++)
+                {
+                    int seat = (startingSeat + offset) % _playerCount;
+                    if (_humanSeats[seat]) return seat;
+                }
+            }
+
+            // GameSelection normally guarantees at least one human seat. Keep
+            // the existing defensive fallback in case a future caller supplies
+            // an invalid all-AI seat selection.
+            return 0;
+        }
 
         // Per-round
         private MatchConfig         _config;
@@ -249,13 +290,19 @@ namespace CruceChaos.Unity
         }
 
         /// <summary>
-        /// Display name for a seat. Seat 0 is the human ("You"); the other seats
-        /// are AI. In team modes seat 2 is the human's partner (across the
-        /// table), so it is named as a teammate rather than a plain opponent.
+        /// Display name for a seat. Single-human games retain the familiar
+        /// "You" / AI wording. When multiple local humans share the device,
+        /// human seats use neutral player names so the HUD and pass prompt do
+        /// not incorrectly call Player 2 an AI.
         /// </summary>
         private string SeatName(int seat)
         {
-            if (seat == 0) return "You";
+            if (_humanSeats != null && _humanSeats[seat])
+            {
+                if (HasMultipleHumanSeats) return $"Player {seat + 1}";
+                return "You";
+            }
+
             if (_playerCount == 2) return "AI";
 
             // 2v2 (team play): seat 2 is the human's partner across the table;
@@ -285,29 +332,13 @@ namespace CruceChaos.Unity
             _bidWinnerSeat  = 0;
             _firstPlayOfRound = true;
 
-            // Face-up render follows the round's FIRST actor when that seat is
-            // human (the starting bidder, rotated per round), else the first
-            // human seat. This way the very first hand shown already belongs to
-            // whoever acts first, so no other player's hand is rendered before
-            // the opener takes the device. The device hasn't been held yet
-            // (_lastDeviceSeat = -1), so the first human to act does NOT trigger
-            // the pass gate — matching single-human behaviour where seat 0 simply
-            // starts.
+            // Select the first human who will participate in the bidding cycle.
+            // On the initial round their hand can render immediately. On later
+            // hotseat rounds, the previous device holder is retained so the
+            // first human's hand stays hidden until the normal gate confirms
+            // that the device has changed hands.
             int firstActor = _config.StartingBidderSeat(_roundNumber);
-            _activeHumanSeat = 0;
-            if (_humanSeats != null)
-            {
-                if (_humanSeats[firstActor])
-                {
-                    _activeHumanSeat = firstActor;
-                }
-                else
-                {
-                    for (int seat = 0; seat < _playerCount; seat++)
-                        if (_humanSeats[seat]) { _activeHumanSeat = seat; break; }
-                }
-            }
-            _lastDeviceSeat = -1;
+            _activeHumanSeat = FirstHumanSeatStartingAt(firstActor);
 
             var ruleOptions = new RuleSetFactory.Options
             {
@@ -358,8 +389,16 @@ namespace CruceChaos.Unity
                 _scoreHUD?.SetTeamPoints(t, 0);
 
             ApplyAutoSort();
-            RebuildHumanHand();
-            RebuildAIHand();
+
+            // If a different human ended the last round, do not briefly show
+            // this opener's freshly dealt hand before the first bid gate runs.
+            // BiddingPhase will call MaybeGate(_activeHumanSeat), then render
+            // the hand only after the next player confirms the handover.
+            if (!NeedsPassDeviceGate(_activeHumanSeat))
+            {
+                RebuildHumanHand();
+                RebuildAIHand();
+            }
 
             StartCoroutine(RoundLoop());
         }
@@ -505,22 +544,29 @@ namespace CruceChaos.Unity
         // ── Pass-the-device gate (hotseat) ────────────────────────────────────
 
         /// <summary>
-        /// Runs the pass-the-device gate IF the handover is human → a DIFFERENT
-        /// human seat. Does nothing (returns immediately) for the first human of
-        /// the round, when the same human seat acts again, or on any transition
-        /// to/from an AI seat. Call this right before a human seat takes control;
-        /// when it fires it switches the face-up render to <paramref name="nextSeat"/>
-        /// only AFTER the player confirms, so no one sees the previous hand.
+        /// Runs the pass-the-device gate only when the next decision belongs to
+        /// a different local human than the person who last held the device.
+        /// It does nothing before any human has held the device, when the same
+        /// human acts again, or on transitions to/from an AI seat. Call this
+        /// immediately before a human takes control; when it fires it switches
+        /// the face-up render to <paramref name="nextSeat"/> only AFTER the
+        /// player confirms, so no one sees the previous hand.
         /// </summary>
+        private bool NeedsPassDeviceGate(int nextSeat)
+        {
+            return _humanSeats != null
+                   && nextSeat >= 0
+                   && nextSeat < _humanSeats.Length
+                   && _lastDeviceSeat >= 0
+                   && _lastDeviceSeat < _humanSeats.Length
+                   && _humanSeats[nextSeat]
+                   && _humanSeats[_lastDeviceSeat]
+                   && _lastDeviceSeat != nextSeat;
+        }
+
         private IEnumerator MaybeGate(int nextSeat)
         {
-            bool needGate = _humanSeats != null
-                            && _humanSeats[nextSeat]
-                            && _lastDeviceSeat >= 0
-                            && _lastDeviceSeat != nextSeat
-                            && _humanSeats[_lastDeviceSeat];
-
-            if (needGate)
+            if (NeedsPassDeviceGate(nextSeat))
                 yield return StartCoroutine(PassDeviceGate(nextSeat));
         }
 
@@ -587,9 +633,8 @@ namespace CruceChaos.Unity
             // Opening bidder rotates each round. Delegate to Core's shared rule
             // (MatchConfig.StartingBidderSeat) rather than re-deriving the
             // formula here — the Unity layer previously hardcoded seat 0 (the
-            // human always opened), which diverged from Core. Seat 0 is always
-            // the human, so the per-seat "is this the human?" checks below still
-            // hold regardless of who opens.
+            // human always opened), which diverged from Core. The seat-aware
+            // checks below keep both single-player and hotseat flows correct.
             int startingBidder = _config.StartingBidderSeat(_roundNumber);
             int lastPasser     = startingBidder;
 
@@ -713,7 +758,7 @@ namespace CruceChaos.Unity
             }
 
             string suitName = SuitDisplayName(_trump);
-            string declarer = _humanSeats[_bidWinnerSeat]
+            string declarer = _humanSeats[_bidWinnerSeat] && !HasMultipleHumanSeats
                 ? "You declare"
                 : $"{SeatName(_bidWinnerSeat)} declares";
             _scoreHUD?.ShowPersistentInfo($"{declarer} trump: {suitName}");
@@ -968,7 +1013,7 @@ namespace CruceChaos.Unity
                         _localParticipant.AddMarriagePoints(bonus);
                         _sound?.PlayMarriageDeclared();
                         _scoreHUD?.ShowMarriageBonus(bonus);
-                        _gameLogger?.LogMarriage("You", announcedSuit.Value.ToString(), bonus);
+                        _gameLogger?.LogMarriage(SeatName(seat), announcedSuit.Value.ToString(), bonus);
                         Debug.Log($"[Cruce] Human announces marriage in {announcedSuit.Value} (+{bonus})");
                     }
                 }
@@ -997,7 +1042,7 @@ namespace CruceChaos.Unity
             _keyboardInput?.EndCardInput();
             _humanController.CancelTurn();
 
-            _gameLogger?.LogCardPlayed("You", chosen.ToString());
+            _gameLogger?.LogCardPlayed(SeatName(seat), chosen.ToString());
             PlayCard(seat, _localParticipant, chosen);
             _firstPlayOfRound = false;
         }
