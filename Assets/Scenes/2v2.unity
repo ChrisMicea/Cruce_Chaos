@@ -1805,9 +1805,28 @@ MonoBehaviour:
   m_GameObject: {fileID: 352755608}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f6bb6d4fb28b42ffb89b39a14e0d8bd6, type: 3}
+  m_Script: {fileID: 11500000, guid: dad61252ba47dff44b9cfcefd7a682ab, type: 3}
   m_Name: 
   m_EditorClassIdentifier: CruceChaos.Unity::CruceChaos.Unity.SoundManager
+  _source: {fileID: 2061209115}
+  _marriageDeclared: {fileID: 8300000, guid: c89fd1d93cc81144e96b1d5484998ed4, type: 3}
+  _cardPlaced: {fileID: 8300000, guid: ddcc4f33de167a04a9f6ad17de74fcda, type: 3}
+  _deckShuffle: {fileID: 8300000, guid: fe710e5c7d8b3fe43822cc3573337080, type: 3}
+  _handShuffle: {fileID: 8300000, guid: 6ddcfdbe3aec19046ba083ed7a8c65fe, type: 3}
+  _handSort: {fileID: 8300000, guid: 6039c49bcd0f68348bd09e84f9d27426, type: 3}
+  _menuButton: {fileID: 8300000, guid: 98f2b3e4ac724c24885624807d6b4f6c, type: 3}
+  _cardDraw: {fileID: 8300000, guid: 0a8829ac7900cb4419f54b571ea45542, type: 3}
+  _illegalMove: {fileID: 8300000, guid: 279c769481d186544952732bb9fce08b, type: 3}
+  _trickWon: {fileID: 8300000, guid: f8e8a71aad462374a887220366916f44, type: 3}
+  _trickLost: {fileID: 8300000, guid: 497805ba0af956d4ab92b12727b2b8c1, type: 3}
+  _roundWon: {fileID: 8300000, guid: f604f2085b9a9244fb773fc7ba31c141, type: 3}
+  _roundLost: {fileID: 8300000, guid: 7a5e82b35af70cb4fb968ced7b35b51e, type: 3}
+  _matchWon: {fileID: 8300000, guid: c6ff0ee7692d5ef4ba4ec7ba9b2d76bf, type: 3}
+  _matchLost: {fileID: 8300000, guid: b451fae28d724fe4abbf5fdc7c583aa2, type: 3}
+  _bidPlaced: {fileID: 8300000, guid: 2532ba033e874d04eba2d6bc9acec2e9, type: 3}
+  _bidPassed: {fileID: 8300000, guid: 98623b0c0e0c98a47a72c3cf986216d6, type: 3}
+  _bidSlider: {fileID: 8300000, guid: 2a6b1d2f2eaa8194ebcf8fed0407627a, type: 3}
+  _sfxVolume: 1
 --- !u!82 &352755610
 AudioSource:
   m_ObjectHideFlags: 0
