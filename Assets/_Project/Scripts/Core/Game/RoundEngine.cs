@@ -227,60 +227,44 @@ namespace CruceChaos.Core.Game
         // --- bidding --------------------------------------------------------
 
         /// <summary>
-        /// Run the bidding phase. Each seat acts EXACTLY ONCE, in order starting
-        /// at <see cref="_startingBidderSeat"/> (rotated per round by the match
-        /// loop). A seat gets a single turn: it either passes, or
-        /// places one numeric bid and is then done — there is no re-raising once
-        /// an opponent outbids it. A numeric bid must exceed the current high bid
-        /// and not exceed the configured maximum (an out-of-range bid is treated
-        /// as a pass). After every seat has acted, the highest bidder wins. If
-        /// every seat passes, the FORCED-1 rule applies: the last player to pass
-        /// is forced to a contract of 1. The winner becomes the opening leader.
+        /// Run the bidding phase by driving the shared <see cref="BiddingSequence"/>
+        /// synchronously: ask each seat once (clockwise from the opener at
+        /// <see cref="_startingBidderSeat"/>), record its bid, then resolve the
+        /// winner. The poker-style one-shot rule (each seat acts exactly once, no
+        /// re-raising) and the forced-1 fallback (all pass => last passer forced
+        /// to 1) live in <see cref="BiddingSequence"/>, so this headless path and
+        /// the Unity coroutine path share one rule implementation and cannot
+        /// diverge. The winner becomes the opening leader.
         /// </summary>
         private void RunBidding()
         {
             _log("--- Bidding ---");
 
-            int highBid = 0;          // 0 == no numeric bid yet
-            int highSeat = -1;
-            int lastPasserSeat = _startingBidderSeat;  // seat of the most recent pass (for forced-1)
+            var sequence = new BiddingSequence(_playerCount, _config.MaxBid, _startingBidderSeat);
 
-            // Each seat acts once, in clockwise order from the opener.
-            for (int i = 0; i < _playerCount; i++)
+            while (sequence.TryGetNextSeat(out int seat, out BiddingContext ctx))
             {
-                int seat = (_startingBidderSeat + i) % _playerCount;
-
-                var ctx = new BiddingContext(highBid > 0 ? highBid : (int?)null, _config.MaxBid);
                 Bid bid = _controllers[seat].PlaceBid(_participants[seat], ctx);
 
                 bool valid = !bid.IsPass && bid.Value >= ctx.MinLegalBid && bid.Value <= _config.MaxBid;
+                _log(valid
+                    ? $"  {_participants[seat].Player.Name} bids {bid.Value}"
+                    : $"  {_participants[seat].Player.Name} passes");
 
-                if (valid)
-                {
-                    highBid = bid.Value;
-                    highSeat = seat;
-                    _log($"  {_participants[seat].Player.Name} bids {highBid}");
-                }
-                else
-                {
-                    lastPasserSeat = seat;
-                    _log($"  {_participants[seat].Player.Name} passes");
-                }
+                sequence.Record(seat, bid);
             }
 
-            if (highSeat < 0)
+            BiddingOutcome outcome = sequence.Resolve();
+            if (outcome.ForcedToOne)
             {
-                // Everyone passed — the LAST player who passed is forced to 1.
-                highSeat = lastPasserSeat;
-                highBid = 1;
-                _log($"  All passed — {_participants[highSeat].Player.Name} (last to pass) is forced to 1");
+                _log($"  All passed — {_participants[outcome.WinnerSeat].Player.Name} (last to pass) is forced to 1");
             }
 
-            _winningBid = highBid;
-            _bidWinnerSeat = highSeat;
-            _leaderIndex = highSeat;
+            _winningBid = outcome.WinningBid;
+            _bidWinnerSeat = outcome.WinnerSeat;
+            _leaderIndex = outcome.WinnerSeat;
 
-            _log($"  => {_participants[highSeat].Player.Name} wins the bid at {highBid} and leads.\n");
+            _log($"  => {_participants[outcome.WinnerSeat].Player.Name} wins the bid at {outcome.WinningBid} and leads.\n");
         }
 
         // --- trick loop -----------------------------------------------------

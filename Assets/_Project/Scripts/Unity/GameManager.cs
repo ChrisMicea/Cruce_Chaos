@@ -624,28 +624,18 @@ namespace CruceChaos.Unity
 
         private IEnumerator BiddingPhase()
         {
-            int highBid  = 0;
-            int highSeat = -1;
-
-            // Opening bidder rotates each round. Delegate to Core's shared rule
-            // (MatchConfig.StartingBidderSeat) rather than re-deriving the
-            // formula here — the Unity layer previously hardcoded seat 0 (the
-            // human always opened), which diverged from Core. The seat-aware
-            // checks below keep both single-player and hotseat flows correct.
+            // The bidding RULE lives in Core's BiddingSequence — each seat acts
+            // exactly once, clockwise from the opener, highest bid wins, forced-1
+            // if all pass. This coroutine only sources each seat's decision (UI
+            // for a human, controller for an AI) and handles presentation. The
+            // headless RoundEngine.RunBidding drives the SAME type, so the two
+            // flows can never diverge again. The opener rotates each round via
+            // MatchConfig.StartingBidderSeat (shared with Core).
             int startingBidder = _config.StartingBidderSeat(_roundNumber);
-            int lastPasser     = startingBidder;
+            var sequence = new BiddingSequence(_playerCount, _config.MaxBid, startingBidder);
 
-            // Cruce bidding is poker-style: each seat acts EXACTLY ONCE, in
-            // clockwise order from the opener. A seat either passes or places one
-            // bid — there is no re-raising once an opponent outbids it. Mirrors
-            // RoundEngine.RunBidding in Core so the headless and Unity flows
-            // agree. (The previous auction-style while-loop re-asked a seat after
-            // it bid, which let players keep outbidding each other.)
-            for (int i = 0; i < _playerCount; i++)
+            while (sequence.TryGetNextSeat(out int seat, out BiddingContext ctx))
             {
-                int seat = (startingBidder + i) % _playerCount;
-
-                var ctx = new BiddingContext(highBid > 0 ? highBid : (int?)null, _config.MaxBid);
                 Bid bid = Bid.Pass;
 
                 if (_humanSeats[seat]) // human
@@ -676,25 +666,27 @@ namespace CruceChaos.Unity
                     bid = _controllers[seat].PlaceBid(_participants[seat], ctx);
                 }
 
+                // Presentation only — BiddingSequence.Record re-applies the same
+                // validity test to decide the winner, so this mirrors it for the
+                // sound/HUD/log feedback.
                 bool valid = !bid.IsPass
                              && bid.Value >= ctx.MinLegalBid
                              && bid.Value <= _config.MaxBid;
 
                 if (valid)
                 {
-                    highBid  = bid.Value;
-                    highSeat = seat;
                     _sound?.PlayBidPlaced();
-                    _scoreHUD?.ShowBidInfo($"{SeatName(seat)} bid {highBid}");
-                    _gameLogger?.LogBid(SeatName(seat), highBid);
+                    _scoreHUD?.ShowBidInfo($"{SeatName(seat)} bid {bid.Value}");
+                    _gameLogger?.LogBid(SeatName(seat), bid.Value);
                 }
                 else
                 {
-                    lastPasser = seat;
                     _sound?.PlayBidPassed();
                     _scoreHUD?.ShowBidInfo($"{SeatName(seat)} passed");
                     _gameLogger?.LogBid(SeatName(seat), null);
                 }
+
+                sequence.Record(seat, bid);
 
                 // Settle pause after this seat's bid/pass so its sound and
                 // the HUD update land before the next seat acts — stops
@@ -703,22 +695,22 @@ namespace CruceChaos.Unity
                 yield return new WaitForSeconds(_bidStepDelay);
             }
 
-            if (highSeat < 0)
+            BiddingOutcome outcome = sequence.Resolve();
+
+            if (outcome.ForcedToOne)
             {
-                highSeat = lastPasser;
-                highBid  = 1;
-                _scoreHUD?.ShowBidInfo($"{SeatName(highSeat)} forced to bid 1");
-                _gameLogger?.LogForcedBid(SeatName(highSeat));
+                _scoreHUD?.ShowBidInfo($"{SeatName(outcome.WinnerSeat)} forced to bid 1");
+                _gameLogger?.LogForcedBid(SeatName(outcome.WinnerSeat));
             }
 
-            _winningBid    = highBid;
-            _bidWinnerSeat = highSeat;
-            _leaderIndex   = highSeat;
+            _winningBid    = outcome.WinningBid;
+            _bidWinnerSeat = outcome.WinnerSeat;
+            _leaderIndex   = outcome.WinnerSeat;
 
-            string bidWinnerName = SeatName(highSeat);
-            _scoreHUD?.ShowPersistentInfo($"{bidWinnerName} won the bid at {highBid}");
-            _gameLogger?.LogBidWinner(bidWinnerName, highBid);
-            Debug.Log($"[Cruce] Bid won by {bidWinnerName} (seat {highSeat}) at {highBid}");
+            string bidWinnerName = SeatName(outcome.WinnerSeat);
+            _scoreHUD?.ShowPersistentInfo($"{bidWinnerName} won the bid at {outcome.WinningBid}");
+            _gameLogger?.LogBidWinner(bidWinnerName, outcome.WinningBid);
+            Debug.Log($"[Cruce] Bid won by {bidWinnerName} (seat {outcome.WinnerSeat}) at {outcome.WinningBid}");
             yield return new WaitForSeconds(1f);
         }
 
