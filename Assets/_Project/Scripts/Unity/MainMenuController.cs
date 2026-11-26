@@ -33,6 +33,17 @@ namespace CruceChaos.Unity
                  "to run silent.")]
         [SerializeField] private SoundManager _sound;
 
+        [Header("Pass & Play")]
+        [Tooltip("In-scene panel listing the pass-and-play modes (1v1 / 1v1v1 / " +
+                 "2v2 classic / 2v2 draft). Shown when the Pass & Play button is " +
+                 "clicked; hidden otherwise. Optional — leave unassigned to skip.")]
+        [SerializeField] private GameObject _modeSelectPanel;
+
+        [Tooltip("The shared seat-picker panel. Opened for the team/FFA modes so " +
+                 "the player can choose which seats are human vs AI. Not used for " +
+                 "1v1 (both seats are human). Optional.")]
+        [SerializeField] private SeatSelectionController _seatSelection;
+
         [Tooltip("Upper bound (seconds) on how long a click can delay the scene " +
                  "load / quit while its sound plays. Guards against an " +
                  "accidentally long clip freezing the menu.")]
@@ -42,6 +53,16 @@ namespace CruceChaos.Unity
         // (e.g. mashing two buttons) — once a transition starts, further clicks
         // are ignored.
         private bool _transitioning;
+
+        // The Pass & Play mode-select panel is left active in the editor (so it's
+        // easy to lay out), so hide it at startup — otherwise it shows on top of
+        // the menu and the Pass & Play button appears to do nothing until Back is
+        // pressed. Mirrors how the panels (BidPanel/PassDevicePanel) self-hide in
+        // Start(). The seat-picker hides itself in its own Start().
+        private void Start()
+        {
+            _modeSelectPanel?.SetActive(false);
+        }
 
         public void OnOneVsOneClicked()
         {
@@ -98,6 +119,96 @@ namespace CruceChaos.Unity
             if (_transitioning) return;
             _transitioning = true;
             StartCoroutine(PlayClickThen(QuitGame));
+        }
+
+        // ── Pass & Play: mode select → (optional) seat picker ─────────────────
+
+        /// <summary>
+        /// Opens the pass-and-play mode-select panel. Wire the existing
+        /// "Pass & Play" main-menu button to this.
+        /// </summary>
+        public void OnPassAndPlayClicked() => ShowModeSelect();
+
+        /// <summary>Shows the mode-select panel and hides the seat-picker.</summary>
+        public void ShowModeSelect()
+        {
+            _seatSelection?.Hide();
+            _modeSelectPanel?.SetActive(true);
+        }
+
+        /// <summary>Closes the mode-select panel (e.g. a Back button on it).</summary>
+        public void HideModeSelect() => _modeSelectPanel?.SetActive(false);
+
+        /// <summary>
+        /// Pass-and-play 1v1: both seats are human, no seat-picker needed. Same
+        /// as <see cref="OnOneVsOneHotseatClicked"/> — set the hotseat flag and
+        /// load the 1v1 scene.
+        /// </summary>
+        public void OnModeOneVsOneClicked()
+        {
+            GameSelection.SelectedMode = GameMode.OneVsOne;
+            GameSelection.PassAndPlay  = true;
+            GameSelection.HumanSeats   = null;
+            HideModeSelect();
+            BeginTransition(_oneVsOneScene);
+        }
+
+        /// <summary>1v1v1 (FFA): open the seat-picker so the player chooses humans.</summary>
+        public void OnModeOneVsOneVsOneClicked() => OpenSeatPicker(GameMode.OneVsOneVsOne);
+
+        /// <summary>2v2 classic: open the seat-picker.</summary>
+        public void OnModeTwoVsTwoClassicClicked() => OpenSeatPicker(GameMode.TwoVsTwo);
+
+        /// <summary>2v2 "with surprises" draft variant: open the seat-picker.</summary>
+        public void OnModeTwoVsTwoDraftClicked() => OpenSeatPicker(GameMode.TwoVsTwoDraft);
+
+        /// <summary>
+        /// Hands off to the shared seat-picker configured for <paramref name="mode"/>.
+        /// If no picker is wired, falls back to launching the mode with the
+        /// default seat-0-human layout so the menu still works.
+        /// </summary>
+        private void OpenSeatPicker(GameMode mode)
+        {
+            if (_seatSelection == null)
+            {
+                // No picker in the scene yet: launch with the engine's default
+                // (seat 0 human) rather than dead-ending the button.
+                GameSelection.SelectedMode = mode;
+                GameSelection.PassAndPlay  = false;
+                GameSelection.HumanSeats   = null;
+                LaunchSelectedMode(mode);
+                return;
+            }
+
+            HideModeSelect();
+            _seatSelection.Configure(mode);
+        }
+
+        /// <summary>
+        /// Loads the scene for <paramref name="mode"/>, reusing the shared
+        /// click-sound transition. Called by the seat-picker once the player has
+        /// confirmed (GameSelection is already populated by that point). The
+        /// classic-vs-draft 2v2 distinction rides in GameSelection.SelectedMode;
+        /// both load the same "2v2" scene.
+        /// </summary>
+        public void LaunchSelectedMode(GameMode mode)
+        {
+            switch (mode)
+            {
+                case GameMode.OneVsOne:
+                    BeginTransition(_oneVsOneScene);
+                    break;
+                case GameMode.OneVsOneVsOne:
+                    BeginTransition(_oneVsOneVsOneScene);
+                    break;
+                case GameMode.TwoVsTwo:
+                case GameMode.TwoVsTwoDraft:
+                    BeginTransition(_twoVsTwoScene);
+                    break;
+                default:
+                    BeginTransition(_oneVsOneScene);
+                    break;
+            }
         }
 
         // ── Transition helpers ────────────────────────────────────────────────
