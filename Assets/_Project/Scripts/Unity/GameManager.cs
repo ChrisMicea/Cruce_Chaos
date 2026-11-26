@@ -624,11 +624,8 @@ namespace CruceChaos.Unity
 
         private IEnumerator BiddingPhase()
         {
-            int highBid      = 0;
-            int highSeat     = -1;
-            bool[] active    = new bool[_playerCount];
-            for (int s = 0; s < _playerCount; s++) active[s] = true;
-            int activeCount  = _playerCount;
+            int highBid  = 0;
+            int highSeat = -1;
 
             // Opening bidder rotates each round. Delegate to Core's shared rule
             // (MatchConfig.StartingBidderSeat) rather than re-deriving the
@@ -638,76 +635,72 @@ namespace CruceChaos.Unity
             int startingBidder = _config.StartingBidderSeat(_roundNumber);
             int lastPasser     = startingBidder;
 
-            int seat = startingBidder;
-
-            while (activeCount > 1 || (activeCount >= 1 && highSeat < 0))
+            // Cruce bidding is poker-style: each seat acts EXACTLY ONCE, in
+            // clockwise order from the opener. A seat either passes or places one
+            // bid — there is no re-raising once an opponent outbids it. Mirrors
+            // RoundEngine.RunBidding in Core so the headless and Unity flows
+            // agree. (The previous auction-style while-loop re-asked a seat after
+            // it bid, which let players keep outbidding each other.)
+            for (int i = 0; i < _playerCount; i++)
             {
-                if (active[seat])
+                int seat = (startingBidder + i) % _playerCount;
+
+                var ctx = new BiddingContext(highBid > 0 ? highBid : (int?)null, _config.MaxBid);
+                Bid bid = Bid.Pass;
+
+                if (_humanSeats[seat]) // human
                 {
-                    if (activeCount == 1 && highSeat == seat) break;
+                    // Pass the device if the previous actor was a different
+                    // human seat. When the gate fires it also switches the
+                    // face-up render to this seat; when it doesn't (first
+                    // human, or same seat again), switch explicitly so this
+                    // seat's hand is the one shown for the bid.
+                    yield return StartCoroutine(MaybeGate(seat));
+                    if (_activeHumanSeat != seat)
+                        SetActiveHumanSeat(seat);
 
-                    var ctx = new BiddingContext(highBid > 0 ? highBid : (int?)null, _config.MaxBid);
-                    Bid bid = Bid.Pass;
+                    bool bidDone = false;
+                    _humanController.BeginBid(ctx, b => { bid = b; bidDone = true; });
+                    _bidPanel?.Show(ctx, _humanController, () => { });
+                    _keyboardInput?.BeginBidInput();
+                    yield return new WaitUntil(() => bidDone);
+                    _keyboardInput?.EndBidInput();
+                    _bidPanel?.Hide();
 
-                    if (_humanSeats[seat]) // human
-                    {
-                        // Pass the device if the previous actor was a different
-                        // human seat. When the gate fires it also switches the
-                        // face-up render to this seat; when it doesn't (first
-                        // human, or same seat again), switch explicitly so this
-                        // seat's hand is the one shown for the bid.
-                        yield return StartCoroutine(MaybeGate(seat));
-                        if (_activeHumanSeat != seat)
-                            SetActiveHumanSeat(seat);
-
-                        bool bidDone = false;
-                        _humanController.BeginBid(ctx, b => { bid = b; bidDone = true; });
-                        _bidPanel?.Show(ctx, _humanController, () => { });
-                        _keyboardInput?.BeginBidInput();
-                        yield return new WaitUntil(() => bidDone);
-                        _keyboardInput?.EndBidInput();
-                        _bidPanel?.Hide();
-
-                        // This human seat now holds the device.
-                        _lastDeviceSeat = seat;
-                    }
-                    else // AI
-                    {
-                        yield return new WaitForSeconds(_bidStepDelay);
-                        bid = _controllers[seat].PlaceBid(_participants[seat], ctx);
-                    }
-
-                    bool valid = !bid.IsPass
-                                 && bid.Value >= ctx.MinLegalBid
-                                 && bid.Value <= _config.MaxBid;
-
-                    if (valid)
-                    {
-                        highBid  = bid.Value;
-                        highSeat = seat;
-                        _sound?.PlayBidPlaced();
-                        _scoreHUD?.ShowBidInfo($"{SeatName(seat)} bid {highBid}");
-                        _gameLogger?.LogBid(SeatName(seat), highBid);
-                    }
-                    else
-                    {
-                        active[seat] = false;
-                        activeCount--;
-                        lastPasser   = seat;
-                        _sound?.PlayBidPassed();
-                        _scoreHUD?.ShowBidInfo($"{SeatName(seat)} passed");
-                        _gameLogger?.LogBid(SeatName(seat), null);
-                    }
-
-                    // Settle pause after this seat's bid/pass so its sound and
-                    // the HUD update land before the next seat acts — stops
-                    // consecutive bid/pass sounds from overlapping. (Temporary
-                    // pacing until the timer system replaces it.)
+                    // This human seat now holds the device.
+                    _lastDeviceSeat = seat;
+                }
+                else // AI
+                {
                     yield return new WaitForSeconds(_bidStepDelay);
+                    bid = _controllers[seat].PlaceBid(_participants[seat], ctx);
                 }
 
-                if (activeCount == 0) break;
-                seat = (seat + 1) % _playerCount;
+                bool valid = !bid.IsPass
+                             && bid.Value >= ctx.MinLegalBid
+                             && bid.Value <= _config.MaxBid;
+
+                if (valid)
+                {
+                    highBid  = bid.Value;
+                    highSeat = seat;
+                    _sound?.PlayBidPlaced();
+                    _scoreHUD?.ShowBidInfo($"{SeatName(seat)} bid {highBid}");
+                    _gameLogger?.LogBid(SeatName(seat), highBid);
+                }
+                else
+                {
+                    lastPasser = seat;
+                    _sound?.PlayBidPassed();
+                    _scoreHUD?.ShowBidInfo($"{SeatName(seat)} passed");
+                    _gameLogger?.LogBid(SeatName(seat), null);
+                }
+
+                // Settle pause after this seat's bid/pass so its sound and
+                // the HUD update land before the next seat acts — stops
+                // consecutive bid/pass sounds from overlapping. (Temporary
+                // pacing until the timer system replaces it.)
+                yield return new WaitForSeconds(_bidStepDelay);
             }
 
             if (highSeat < 0)
