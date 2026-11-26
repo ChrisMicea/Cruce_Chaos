@@ -227,86 +227,44 @@ namespace CruceChaos.Core.Game
         // --- bidding --------------------------------------------------------
 
         /// <summary>
-        /// Run the bidding phase. Seats bid in order starting at
-        /// <see cref="_startingBidderSeat"/> (rotated per round by the match
-        /// loop); a pass drops a seat out; a numeric bid must exceed the current
-        /// high bid and not exceed the configured maximum (an out-of-range bid is
-        /// treated as a pass). Bidding ends when at most one seat is still in. If
-        /// every seat passes, the FORCED-1 rule applies: the last player to pass
-        /// is forced to a contract of 1. The winner becomes the opening leader.
+        /// Run the bidding phase by driving the shared <see cref="BiddingSequence"/>
+        /// synchronously: ask each seat once (clockwise from the opener at
+        /// <see cref="_startingBidderSeat"/>), record its bid, then resolve the
+        /// winner. The poker-style one-shot rule (each seat acts exactly once, no
+        /// re-raising) and the forced-1 fallback (all pass => last passer forced
+        /// to 1) live in <see cref="BiddingSequence"/>, so this headless path and
+        /// the Unity coroutine path share one rule implementation and cannot
+        /// diverge. The winner becomes the opening leader.
         /// </summary>
         private void RunBidding()
         {
             _log("--- Bidding ---");
 
-            bool[] active = new bool[_playerCount];
-            for (int s = 0; s < _playerCount; s++)
+            var sequence = new BiddingSequence(_playerCount, _config.MaxBid, _startingBidderSeat);
+
+            while (sequence.TryGetNextSeat(out int seat, out BiddingContext ctx))
             {
-                active[s] = true;
+                Bid bid = _controllers[seat].PlaceBid(_participants[seat], ctx);
+
+                bool valid = !bid.IsPass && bid.Value >= ctx.MinLegalBid && bid.Value <= _config.MaxBid;
+                _log(valid
+                    ? $"  {_participants[seat].Player.Name} bids {bid.Value}"
+                    : $"  {_participants[seat].Player.Name} passes");
+
+                sequence.Record(seat, bid);
             }
 
-            int highBid = 0;          // 0 == no numeric bid yet
-            int highSeat = -1;
-            int activeCount = _playerCount;
-            int lastPasserSeat = _startingBidderSeat;  // seat of the most recent pass (for forced-1)
-
-            int seat = _startingBidderSeat;
-            // Cycle through seats until at most one remains active. A seat that
-            // is the sole remaining active bidder with a standing bid wins.
-            while (activeCount > 1 || (activeCount >= 1 && highSeat < 0))
+            BiddingOutcome outcome = sequence.Resolve();
+            if (outcome.ForcedToOne)
             {
-                if (active[seat])
-                {
-                    // If this seat already holds the high bid and is the only
-                    // one left active, it wins — stop.
-                    if (activeCount == 1 && highSeat == seat)
-                    {
-                        break;
-                    }
-
-                    var ctx = new BiddingContext(highBid > 0 ? highBid : (int?)null, _config.MaxBid);
-                    Bid bid = _controllers[seat].PlaceBid(_participants[seat], ctx);
-
-                    bool valid = !bid.IsPass && bid.Value >= ctx.MinLegalBid && bid.Value <= _config.MaxBid;
-
-                    if (valid)
-                    {
-                        highBid = bid.Value;
-                        highSeat = seat;
-                        _log($"  {_participants[seat].Player.Name} bids {highBid}");
-                    }
-                    else
-                    {
-                        active[seat] = false;
-                        activeCount--;
-                        lastPasserSeat = seat;
-                        _log($"  {_participants[seat].Player.Name} passes");
-                    }
-                }
-
-                // Safety: if nobody is active and nobody ever bid, break to the
-                // forced-1 handling below.
-                if (activeCount == 0)
-                {
-                    break;
-                }
-
-                seat = (seat + 1) % _playerCount;
+                _log($"  All passed — {_participants[outcome.WinnerSeat].Player.Name} (last to pass) is forced to 1");
             }
 
-            if (highSeat < 0)
-            {
-                // Everyone passed — the LAST player who passed is forced to 1.
-                highSeat = lastPasserSeat;
-                highBid = 1;
-                _log($"  All passed — {_participants[highSeat].Player.Name} (last to pass) is forced to 1");
-            }
+            _winningBid = outcome.WinningBid;
+            _bidWinnerSeat = outcome.WinnerSeat;
+            _leaderIndex = outcome.WinnerSeat;
 
-            _winningBid = highBid;
-            _bidWinnerSeat = highSeat;
-            _leaderIndex = highSeat;
-
-            _log($"  => {_participants[highSeat].Player.Name} wins the bid at {highBid} and leads.\n");
+            _log($"  => {_participants[outcome.WinnerSeat].Player.Name} wins the bid at {outcome.WinningBid} and leads.\n");
         }
 
         // --- trick loop -----------------------------------------------------

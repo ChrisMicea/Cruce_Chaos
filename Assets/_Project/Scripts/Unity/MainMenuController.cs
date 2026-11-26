@@ -46,6 +46,20 @@ namespace CruceChaos.Unity
         public void OnOneVsOneClicked()
         {
             GameSelection.SelectedMode = GameMode.OneVsOne;
+            GameSelection.PassAndPlay  = false;
+            BeginTransition(_oneVsOneScene);
+        }
+
+        /// <summary>
+        /// 1v1 pass-and-play (hotseat): same 1v1 scene, but both seats are human
+        /// and share the device. Sets <see cref="GameSelection.PassAndPlay"/> so
+        /// the scene's GameManager marks all seats human and runs the
+        /// pass-the-device gate between turns.
+        /// </summary>
+        public void OnOneVsOneHotseatClicked()
+        {
+            GameSelection.SelectedMode = GameMode.OneVsOne;
+            GameSelection.PassAndPlay  = true;
             BeginTransition(_oneVsOneScene);
         }
 
@@ -53,6 +67,7 @@ namespace CruceChaos.Unity
         public void OnTwoVsTwoClassicClicked()
         {
             GameSelection.SelectedMode = GameMode.TwoVsTwo;
+            GameSelection.PassAndPlay  = false;
             BeginTransition(_twoVsTwoScene);
         }
 
@@ -63,6 +78,7 @@ namespace CruceChaos.Unity
         public void OnTwoVsTwoSurprisesClicked()
         {
             GameSelection.SelectedMode = GameMode.TwoVsTwoDraft;
+            GameSelection.PassAndPlay  = false;
             BeginTransition(_twoVsTwoScene);
         }
 
@@ -73,6 +89,7 @@ namespace CruceChaos.Unity
         public void OnOneVsOneVsOneClicked()
         {
             GameSelection.SelectedMode = GameMode.OneVsOneVsOne;
+            GameSelection.PassAndPlay  = false;
             BeginTransition(_oneVsOneVsOneScene);
         }
 

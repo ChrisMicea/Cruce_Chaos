@@ -122,4 +122,4 @@ InitTestScene*.unity*
 !/Sandbox/**/*.csproj
 !/Sandbox/**/*.sln
 
-
+*.agents

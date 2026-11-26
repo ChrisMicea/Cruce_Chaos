@@ -63,6 +63,11 @@ namespace CruceChaos.Unity
         [Tooltip("Panel shown when the human can announce a marriage.")]
         [SerializeField] private MarriagePanel      _marriagePanel;
 
+        [Tooltip("Blocking \"pass the device\" panel for hotseat (pass-and-play) " +
+                 "games. Optional — leave unassigned for single-human play; the " +
+                 "gate is null-guarded so an unwired scene still runs.")]
+        [SerializeField] private PassDevicePanel    _passDevicePanel;
+
         [Header("Card Back Sprite")]
         [SerializeField] private Sprite _cardBackSprite;
 
@@ -108,17 +113,73 @@ namespace CruceChaos.Unity
 
         // ── Runtime state ─────────────────────────────────────────────────────
 
-        // Seat model: seat 0 is ALWAYS the human; seats 1..N-1 are AI.
-        // These arrays are sized by MatchConfig.PlayerCount at round start, so
-        // the same code drives 1v1 (2 seats) and 2v2 (4 seats).
+        // Seat model (pass-and-play aware): which seats are human is a SET, not a
+        // hardcoded seat 0. _humanSeats[seat] is true for a human-controlled seat;
+        // _activeHumanSeat names the single human seat currently deciding (the one
+        // whose hand renders face-up). The one _humanController serves each human
+        // seat serially — only one human seat is ever mid-decision in the
+        // coroutine, so sharing it is safe. In the default single-human game
+        // _humanSeats = {true,false,...} and _activeHumanSeat stays 0, so behaviour
+        // is identical to the original. These arrays are sized by
+        // MatchConfig.PlayerCount at round start, so the same code drives 1v1
+        // (2 seats) and 2v2 (4 seats).
         private Player[]            _players;
         private IPlayerController[] _controllers;
         private int                 _playerCount;
+        private bool[]              _humanSeats;
+        private int                 _activeHumanSeat;
 
-        // Convenience accessors for seat 0 (the human) — the UI only ever drives
-        // this seat directly, so keeping named getters avoids churn in the many
-        // places that touch the human's participant/views.
-        private RoundParticipant _humanParticipant => _participants != null ? _participants[0] : null;
+        // Who last held the device (last human seat that acted). -1 only before
+        // the first round. It carries across round boundaries so a newly opening
+        // player must still receive the device before their hand is rendered.
+        private int                 _lastDeviceSeat = -1;
+
+        // Convenience accessor for the LOCAL (active) human seat — the UI only
+        // ever drives one human seat at a time, so keeping a named getter avoids
+        // churn in the many places that touch the active human's participant/
+        // views. Keyed off _activeHumanSeat (0 in the single-human game).
+        private RoundParticipant _localParticipant => _participants != null ? _participants[_activeHumanSeat] : null;
+
+        /// <summary>True when two or more seats are controlled by local humans.</summary>
+        private bool HasMultipleHumanSeats
+        {
+            get
+            {
+                if (_humanSeats == null) return false;
+
+                int humanCount = 0;
+                foreach (bool isHuman in _humanSeats)
+                {
+                    if (!isHuman) continue;
+                    humanCount++;
+                    if (humanCount > 1) return true;
+                }
+
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Finds the first human who will act when bidding begins at
+        /// <paramref name="startingSeat"/>. This becomes the pending viewer at
+        /// the beginning of a round, even if one or more AI seats bid first.
+        /// </summary>
+        private int FirstHumanSeatStartingAt(int startingSeat)
+        {
+            if (_humanSeats != null)
+            {
+                for (int offset = 0; offset < _playerCount; offset++)
+                {
+                    int seat = (startingSeat + offset) % _playerCount;
+                    if (_humanSeats[seat]) return seat;
+                }
+            }
+
+            // GameSelection normally guarantees at least one human seat. Keep
+            // the existing defensive fallback in case a future caller supplies
+            // an invalid all-AI seat selection.
+            return 0;
+        }
 
         // Per-round
         private MatchConfig         _config;
@@ -139,7 +200,7 @@ namespace CruceChaos.Unity
 
         // Bidding state
         private int?  _winningBid;
-        private int   _bidWinnerSeat; // 0 = human, 1 = AI
+        private int   _bidWinnerSeat; // seat index of the bid winner (0..N-1)
 
         private readonly List<CardView>   _humanCardViews  = new List<CardView>();
 
@@ -167,9 +228,55 @@ namespace CruceChaos.Unity
             _config      = GameModes.DefaultConfig(mode, ruleOptions);
             _playerCount = _config.PlayerCount;
 
+            // Decide which seats are human. Priority:
+            //   1. An explicit GameSelection.HumanSeats matching the player count
+            //      (the future seat-selection screen's contract) — used verbatim.
+            //   2. Else GameSelection.PassAndPlay → every seat human (1v1 ⇒ {0,1}).
+            //   3. Else only seat 0 human — the original single-human game, so a
+            //      directly-entered editor scene behaves exactly as before.
+            _humanSeats = new bool[_playerCount];
+            if (GameSelection.HumanSeats != null
+                && GameSelection.HumanSeats.Length == _playerCount)
+            {
+                Array.Copy(GameSelection.HumanSeats, _humanSeats, _playerCount);
+            }
+            else if (GameSelection.PassAndPlay)
+            {
+                for (int seat = 0; seat < _playerCount; seat++) _humanSeats[seat] = true;
+            }
+            else
+            {
+                _humanSeats[0] = true;
+            }
+
+            // The active human seat starts at the first human seat (0 in the
+            // single-human game). Fallback to 0 if somehow no seat is human.
+            _activeHumanSeat = 0;
+            for (int seat = 0; seat < _playerCount; seat++)
+                if (_humanSeats[seat]) { _activeHumanSeat = seat; break; }
+
+            // Human seats share the one _humanController (served serially); every
+            // other seat gets its own AI controller.
+            _players     = new Player[_playerCount];
+            _controllers = new IPlayerController[_playerCount];
+            for (int seat = 0; seat < _playerCount; seat++)
+            {
+                _players[seat]     = new Player(SeatName(seat));
+                _controllers[seat] = _humanSeats[seat]
+                    ? (IPlayerController)_humanController
+                    : new GreedyHeuristicController();
+            }
+
+            // The menu-set hotseat choice has now been consumed; reset the static
+            // flags so a later direct scene entry never inherits a stale choice.
+            GameSelection.PassAndPlay = false;
+            GameSelection.HumanSeats  = null;
+
             // Build the scoreboard: one slot per team, in team-index order. The
             // slot name is the team's label — for individual play it's the seat
             // name ("You" / "Opponent A"); for 2v2 it's "Your Team"/"Opponents".
+            // Done after the seat model is known so MyTeamIndex() reads the
+            // active human seat's team.
             int[] teams = _config.TeamOfSeat.Distinct().OrderBy(t => t).ToArray();
             var slots = teams.Select(t => new ScoreHUD.Slot(t, TeamDisplayName(t))).ToArray();
             _scoreHUD?.SetScoreboard(slots);
@@ -177,30 +284,25 @@ namespace CruceChaos.Unity
             // line up with the ScoreHUD's running-score labels.
             _matchManager?.SetScoreboard(slots, MyTeamIndex());
 
-            // Seat 0 = human; every other seat = its own AI controller.
-            _players     = new Player[_playerCount];
-            _controllers = new IPlayerController[_playerCount];
-            for (int seat = 0; seat < _playerCount; seat++)
-            {
-                _players[seat]     = new Player(SeatName(seat));
-                _controllers[seat] = seat == 0
-                    ? (IPlayerController)_humanController
-                    : new GreedyHeuristicController();
-            }
-
             _gameLogger?.LogMatchStart();
             _roundNumber  = 0;
             StartRound();
         }
 
         /// <summary>
-        /// Display name for a seat. Seat 0 is the human ("You"); the other seats
-        /// are AI. In team modes seat 2 is the human's partner (across the
-        /// table), so it is named as a teammate rather than a plain opponent.
+        /// Display name for a seat. Single-human games retain the familiar
+        /// "You" / AI wording. When multiple local humans share the device,
+        /// human seats use neutral player names so the HUD and pass prompt do
+        /// not incorrectly call Player 2 an AI.
         /// </summary>
         private string SeatName(int seat)
         {
-            if (seat == 0) return "You";
+            if (_humanSeats != null && _humanSeats[seat])
+            {
+                if (HasMultipleHumanSeats) return $"Player {seat + 1}";
+                return "You";
+            }
+
             if (_playerCount == 2) return "AI";
 
             // 2v2 (team play): seat 2 is the human's partner across the table;
@@ -229,6 +331,14 @@ namespace CruceChaos.Unity
             _winningBid     = null;
             _bidWinnerSeat  = 0;
             _firstPlayOfRound = true;
+
+            // Select the first human who will participate in the bidding cycle.
+            // On the initial round their hand can render immediately. On later
+            // hotseat rounds, the previous device holder is retained so the
+            // first human's hand stays hidden until the normal gate confirms
+            // that the device has changed hands.
+            int firstActor = _config.StartingBidderSeat(_roundNumber);
+            _activeHumanSeat = FirstHumanSeatStartingAt(firstActor);
 
             var ruleOptions = new RuleSetFactory.Options
             {
@@ -265,7 +375,7 @@ namespace CruceChaos.Unity
 
             _gameLogger?.LogRoundStart(_roundNumber);
             _gameLogger?.LogDeal(
-                _humanParticipant.Hand.ToString(),
+                _localParticipant.Hand.ToString(),
                 $"{_config.CardsPerPlayer} cards (face down) × {_playerCount - 1} opponents",
                 _deck.Count);
 
@@ -279,8 +389,16 @@ namespace CruceChaos.Unity
                 _scoreHUD?.SetTeamPoints(t, 0);
 
             ApplyAutoSort();
-            RebuildHumanHand();
-            RebuildAIHand();
+
+            // If a different human ended the last round, do not briefly show
+            // this opener's freshly dealt hand before the first bid gate runs.
+            // BiddingPhase will call MaybeGate(_activeHumanSeat), then render
+            // the hand only after the next player confirms the handover.
+            if (!NeedsPassDeviceGate(_activeHumanSeat))
+            {
+                RebuildHumanHand();
+                RebuildAIHand();
+            }
 
             StartCoroutine(RoundLoop());
         }
@@ -361,8 +479,14 @@ namespace CruceChaos.Unity
 
         // ── Scoring (delegates to Core) ───────────────────────────────────────
 
-        /// <summary>The team index the human (seat 0) belongs to.</summary>
-        private int MyTeamIndex() => _config.TeamOfSeat[0];
+        /// <summary>
+        /// The team index the local (active) human belongs to — the perspective
+        /// the scoreboard and win/lose feedback read from. In the single-human
+        /// game _activeHumanSeat is always 0, so this returns TeamOfSeat[0] exactly
+        /// as before. In hotseat it follows whichever human seat currently holds
+        /// the device, so "my side won" reads from the current viewer.
+        /// </summary>
+        private int MyTeamIndex() => _config.TeamOfSeat[_activeHumanSeat];
 
         /// <summary>
         /// Display name for a whole team (scoreboard slot). In individual play a
@@ -417,101 +541,176 @@ namespace CruceChaos.Unity
             return new RoundResult(units, _winningBid, _bidWinnerSeat, bidWinnerTeam, _trump);
         }
 
+        // ── Pass-the-device gate (hotseat) ────────────────────────────────────
+
+        /// <summary>
+        /// Runs the pass-the-device gate only when the next decision belongs to
+        /// a different local human than the person who last held the device.
+        /// It does nothing before any human has held the device, when the same
+        /// human acts again, or on transitions to/from an AI seat. Call this
+        /// immediately before a human takes control; when it fires it switches
+        /// the face-up render to <paramref name="nextSeat"/> only AFTER the
+        /// player confirms, so no one sees the previous hand.
+        /// </summary>
+        private bool NeedsPassDeviceGate(int nextSeat)
+        {
+            return _humanSeats != null
+                   && nextSeat >= 0
+                   && nextSeat < _humanSeats.Length
+                   && _lastDeviceSeat >= 0
+                   && _lastDeviceSeat < _humanSeats.Length
+                   && _humanSeats[nextSeat]
+                   && _humanSeats[_lastDeviceSeat]
+                   && _lastDeviceSeat != nextSeat;
+        }
+
+        private IEnumerator MaybeGate(int nextSeat)
+        {
+            if (NeedsPassDeviceGate(nextSeat))
+                yield return StartCoroutine(PassDeviceGate(nextSeat));
+        }
+
+        /// <summary>
+        /// Blocking "pass the device" handover to <paramref name="nextSeat"/>.
+        /// Hides EVERY rendered hand first (so nothing of the previous player
+        /// shows), displays the panel with the next seat's name, waits for the
+        /// Yes confirmation, then switches the active human seat and renders its
+        /// hand face-up. Null-guarded so a scene that hasn't wired the panel yet
+        /// still runs (it just skips the blocking wait).
+        /// </summary>
+        private IEnumerator PassDeviceGate(int nextSeat)
+        {
+            // Hide everything on the table so the waiting player can't peek while
+            // the device is in transit.
+            ClearAllCardViews();
+
+            bool confirmed = false;
+            if (_passDevicePanel != null)
+            {
+                _passDevicePanel.Show(SeatName(nextSeat), () => confirmed = true);
+                yield return new WaitUntil(() => confirmed);
+                _passDevicePanel.Hide();
+            }
+
+            // Switch perspective to the new seat and rebuild its hand face-up;
+            // every other seat renders as card backs (handled by RebuildAIHand).
+            SetActiveHumanSeat(nextSeat);
+        }
+
+        /// <summary>
+        /// Makes <paramref name="seat"/> the active (face-up) human seat and
+        /// rebuilds the rendered hands around it: the new seat's actual Hand
+        /// becomes the face-up display order, auto-sort/highlights reapply, and
+        /// all other seats show card backs. Safe to call when the seat is already
+        /// active (used both by the gate and by direct, un-gated activation).
+        /// </summary>
+        private void SetActiveHumanSeat(int seat)
+        {
+            _activeHumanSeat = seat;
+
+            // _handDisplayOrder is per-hand state. Rederive it from the NEW active
+            // seat's actual hand so sort/shuffle/auto-sort operate on this seat.
+            _handDisplayOrder.Clear();
+            if (_localParticipant != null)
+                _handDisplayOrder.AddRange(_localParticipant.Hand.Cards);
+
+            ApplyAutoSort();
+            RebuildHumanHand();
+            RebuildAIHand();
+            ApplyTrumpHighlights();
+        }
+
         // ── Bidding phase ─────────────────────────────────────────────────────
 
         private IEnumerator BiddingPhase()
         {
-            int highBid      = 0;
-            int highSeat     = -1;
-            bool[] active    = new bool[_playerCount];
-            for (int s = 0; s < _playerCount; s++) active[s] = true;
-            int activeCount  = _playerCount;
-
-            // Opening bidder rotates each round. Delegate to Core's shared rule
-            // (MatchConfig.StartingBidderSeat) rather than re-deriving the
-            // formula here — the Unity layer previously hardcoded seat 0 (the
-            // human always opened), which diverged from Core. Seat 0 is always
-            // the human, so the per-seat "is this the human?" checks below still
-            // hold regardless of who opens.
+            // The bidding RULE lives in Core's BiddingSequence — each seat acts
+            // exactly once, clockwise from the opener, highest bid wins, forced-1
+            // if all pass. This coroutine only sources each seat's decision (UI
+            // for a human, controller for an AI) and handles presentation. The
+            // headless RoundEngine.RunBidding drives the SAME type, so the two
+            // flows can never diverge again. The opener rotates each round via
+            // MatchConfig.StartingBidderSeat (shared with Core).
             int startingBidder = _config.StartingBidderSeat(_roundNumber);
-            int lastPasser     = startingBidder;
+            var sequence = new BiddingSequence(_playerCount, _config.MaxBid, startingBidder);
 
-            int seat = startingBidder;
-
-            while (activeCount > 1 || (activeCount >= 1 && highSeat < 0))
+            while (sequence.TryGetNextSeat(out int seat, out BiddingContext ctx))
             {
-                if (active[seat])
+                Bid bid = Bid.Pass;
+
+                if (_humanSeats[seat]) // human
                 {
-                    if (activeCount == 1 && highSeat == seat) break;
+                    // Pass the device if the previous actor was a different
+                    // human seat. When the gate fires it also switches the
+                    // face-up render to this seat; when it doesn't (first
+                    // human, or same seat again), switch explicitly so this
+                    // seat's hand is the one shown for the bid.
+                    yield return StartCoroutine(MaybeGate(seat));
+                    if (_activeHumanSeat != seat)
+                        SetActiveHumanSeat(seat);
 
-                    var ctx = new BiddingContext(highBid > 0 ? highBid : (int?)null, _config.MaxBid);
-                    Bid bid = Bid.Pass;
+                    bool bidDone = false;
+                    _humanController.BeginBid(ctx, b => { bid = b; bidDone = true; });
+                    _bidPanel?.Show(ctx, _humanController, () => { });
+                    _keyboardInput?.BeginBidInput();
+                    yield return new WaitUntil(() => bidDone);
+                    _keyboardInput?.EndBidInput();
+                    _bidPanel?.Hide();
 
-                    if (seat == 0) // human
-                    {
-                        bool bidDone = false;
-                        _humanController.BeginBid(ctx, b => { bid = b; bidDone = true; });
-                        _bidPanel?.Show(ctx, _humanController, () => { });
-                        _keyboardInput?.BeginBidInput();
-                        yield return new WaitUntil(() => bidDone);
-                        _keyboardInput?.EndBidInput();
-                        _bidPanel?.Hide();
-                    }
-                    else // AI
-                    {
-                        yield return new WaitForSeconds(_bidStepDelay);
-                        bid = _controllers[seat].PlaceBid(_participants[seat], ctx);
-                    }
-
-                    bool valid = !bid.IsPass
-                                 && bid.Value >= ctx.MinLegalBid
-                                 && bid.Value <= _config.MaxBid;
-
-                    if (valid)
-                    {
-                        highBid  = bid.Value;
-                        highSeat = seat;
-                        _sound?.PlayBidPlaced();
-                        _scoreHUD?.ShowBidInfo($"{SeatName(seat)} bid {highBid}");
-                        _gameLogger?.LogBid(SeatName(seat), highBid);
-                    }
-                    else
-                    {
-                        active[seat] = false;
-                        activeCount--;
-                        lastPasser   = seat;
-                        _sound?.PlayBidPassed();
-                        _scoreHUD?.ShowBidInfo($"{SeatName(seat)} passed");
-                        _gameLogger?.LogBid(SeatName(seat), null);
-                    }
-
-                    // Settle pause after this seat's bid/pass so its sound and
-                    // the HUD update land before the next seat acts — stops
-                    // consecutive bid/pass sounds from overlapping. (Temporary
-                    // pacing until the timer system replaces it.)
+                    // This human seat now holds the device.
+                    _lastDeviceSeat = seat;
+                }
+                else // AI
+                {
                     yield return new WaitForSeconds(_bidStepDelay);
+                    bid = _controllers[seat].PlaceBid(_participants[seat], ctx);
                 }
 
-                if (activeCount == 0) break;
-                seat = (seat + 1) % _playerCount;
+                // Presentation only — BiddingSequence.Record re-applies the same
+                // validity test to decide the winner, so this mirrors it for the
+                // sound/HUD/log feedback.
+                bool valid = !bid.IsPass
+                             && bid.Value >= ctx.MinLegalBid
+                             && bid.Value <= _config.MaxBid;
+
+                if (valid)
+                {
+                    _sound?.PlayBidPlaced();
+                    _scoreHUD?.ShowBidInfo($"{SeatName(seat)} bid {bid.Value}");
+                    _gameLogger?.LogBid(SeatName(seat), bid.Value);
+                }
+                else
+                {
+                    _sound?.PlayBidPassed();
+                    _scoreHUD?.ShowBidInfo($"{SeatName(seat)} passed");
+                    _gameLogger?.LogBid(SeatName(seat), null);
+                }
+
+                sequence.Record(seat, bid);
+
+                // Settle pause after this seat's bid/pass so its sound and
+                // the HUD update land before the next seat acts — stops
+                // consecutive bid/pass sounds from overlapping. (Temporary
+                // pacing until the timer system replaces it.)
+                yield return new WaitForSeconds(_bidStepDelay);
             }
 
-            if (highSeat < 0)
+            BiddingOutcome outcome = sequence.Resolve();
+
+            if (outcome.ForcedToOne)
             {
-                highSeat = lastPasser;
-                highBid  = 1;
-                _scoreHUD?.ShowBidInfo($"{SeatName(highSeat)} forced to bid 1");
-                _gameLogger?.LogForcedBid(SeatName(highSeat));
+                _scoreHUD?.ShowBidInfo($"{SeatName(outcome.WinnerSeat)} forced to bid 1");
+                _gameLogger?.LogForcedBid(SeatName(outcome.WinnerSeat));
             }
 
-            _winningBid    = highBid;
-            _bidWinnerSeat = highSeat;
-            _leaderIndex   = highSeat;
+            _winningBid    = outcome.WinningBid;
+            _bidWinnerSeat = outcome.WinnerSeat;
+            _leaderIndex   = outcome.WinnerSeat;
 
-            string bidWinnerName = SeatName(highSeat);
-            _scoreHUD?.ShowPersistentInfo($"{bidWinnerName} won the bid at {highBid}");
-            _gameLogger?.LogBidWinner(bidWinnerName, highBid);
-            Debug.Log($"[Cruce] Bid won by {bidWinnerName} (seat {highSeat}) at {highBid}");
+            string bidWinnerName = SeatName(outcome.WinnerSeat);
+            _scoreHUD?.ShowPersistentInfo($"{bidWinnerName} won the bid at {outcome.WinningBid}");
+            _gameLogger?.LogBidWinner(bidWinnerName, outcome.WinningBid);
+            Debug.Log($"[Cruce] Bid won by {bidWinnerName} (seat {outcome.WinnerSeat}) at {outcome.WinningBid}");
             yield return new WaitForSeconds(1f);
         }
 
@@ -519,8 +718,14 @@ namespace CruceChaos.Unity
 
         private IEnumerator DeclareTrumpPhase()
         {
-            if (_bidWinnerSeat == 0) // human declares
+            if (_humanSeats[_bidWinnerSeat]) // human declares
             {
+                // Pass the device if the declarer is a human seat different from
+                // whoever last acted; make it the active face-up seat either way.
+                yield return StartCoroutine(MaybeGate(_bidWinnerSeat));
+                if (_activeHumanSeat != _bidWinnerSeat)
+                    SetActiveHumanSeat(_bidWinnerSeat);
+
                 Suit chosen = default;
                 bool done   = false;
                 _humanController.BeginDeclareTrump(suit => { chosen = suit; done = true; });
@@ -528,6 +733,8 @@ namespace CruceChaos.Unity
                 yield return new WaitUntil(() => done);
                 _trumpPickerPanel?.Hide();
                 _trump = chosen;
+
+                _lastDeviceSeat = _bidWinnerSeat;
             }
             else // AI (any non-human seat) declares
             {
@@ -536,7 +743,7 @@ namespace CruceChaos.Unity
             }
 
             string suitName = SuitDisplayName(_trump);
-            string declarer = _bidWinnerSeat == 0
+            string declarer = _humanSeats[_bidWinnerSeat] && !HasMultipleHumanSeats
                 ? "You declare"
                 : $"{SeatName(_bidWinnerSeat)} declares";
             _scoreHUD?.ShowPersistentInfo($"{declarer} trump: {suitName}");
@@ -579,8 +786,15 @@ namespace CruceChaos.Unity
                 RoundParticipant p = _participants[seat];
                 Card picked;
 
-                if (seat == 0) // human picks via the revealed CardViews
+                if (_humanSeats[seat]) // human picks via the revealed CardViews
                 {
+                    // Pass the device if this human drafter differs from the last
+                    // actor; make it the active face-up seat. (Dead path for 1v1,
+                    // which never drafts, but kept correct for future modes.)
+                    yield return StartCoroutine(MaybeGate(seat));
+                    if (_activeHumanSeat != seat)
+                        SetActiveHumanSeat(seat);
+
                     HighlightDraftChoices(true);
                     bool done = false;
                     Card chosen = default;
@@ -605,9 +819,9 @@ namespace CruceChaos.Unity
                 _sound?.PlayCardDraw();
                 RemoveDraftRevealCard(picked);
 
-                if (seat == 0)
+                if (seat == _activeHumanSeat)
                 {
-                    // Track and show the human's new card.
+                    // Track and show the active human's new card face-up.
                     _handDisplayOrder.Add(picked);
                     ApplyAutoSort();
                     RebuildHumanHand();
@@ -615,9 +829,13 @@ namespace CruceChaos.Unity
                 }
                 else
                 {
-                    // Refresh that opponent's face-down fan (one more card).
+                    // Refresh that (face-down) seat's fan — one more card.
                     RebuildAIHand();
                 }
+
+                // A human drafter now holds the device.
+                if (_humanSeats[seat])
+                    _lastDeviceSeat = seat;
 
                 Debug.Log($"[Cruce] {SeatName(seat)} drafts {picked}");
                 yield return new WaitForSeconds(0.4f);
@@ -714,12 +932,23 @@ namespace CruceChaos.Unity
             for (int i = 0; i < _playerCount; i++)
             {
                 int seat    = (_leaderIndex + i) % _playerCount;
-                bool isHuman = (seat == 0);
+                bool isHuman = _humanSeats[seat];
                 bool isLeading = (i == 0);
                 bool isOpeningLead = _firstPlayOfRound && isLeading;
 
                 if (isHuman)
-                    yield return StartCoroutine(HumanPlays(isLeading, isOpeningLead));
+                {
+                    // Pass the device if the previous actor was a different human
+                    // seat; make this seat the active face-up seat either way.
+                    yield return StartCoroutine(MaybeGate(seat));
+                    if (_activeHumanSeat != seat)
+                        SetActiveHumanSeat(seat);
+
+                    yield return StartCoroutine(HumanPlays(seat, isLeading, isOpeningLead));
+
+                    // This human seat now holds the device.
+                    _lastDeviceSeat = seat;
+                }
                 else
                     yield return StartCoroutine(AIPlays(seat, isLeading, isOpeningLead));
             }
@@ -738,13 +967,13 @@ namespace CruceChaos.Unity
 
         // ── Human turn ────────────────────────────────────────────────────────
 
-        private IEnumerator HumanPlays(bool isLeading, bool isOpeningLead)
+        private IEnumerator HumanPlays(int seat, bool isLeading, bool isOpeningLead)
         {
             // Marriage announcement (only when leading)
             Suit? announcedSuit = null;
             if (isLeading)
             {
-                var marriages = new List<Suit>(_humanParticipant.Hand.MarriageSuits());
+                var marriages = new List<Suit>(_localParticipant.Hand.MarriageSuits());
                 if (isOpeningLead)
                     marriages.RemoveAll(s => !(_trump.HasValue && s == _trump.Value));
 
@@ -766,10 +995,10 @@ namespace CruceChaos.Unity
                     if (announcedSuit.HasValue)
                     {
                         int bonus = _trump.HasValue && announcedSuit.Value == _trump.Value ? 40 : 20;
-                        _humanParticipant.AddMarriagePoints(bonus);
+                        _localParticipant.AddMarriagePoints(bonus);
                         _sound?.PlayMarriageDeclared();
                         _scoreHUD?.ShowMarriageBonus(bonus);
-                        _gameLogger?.LogMarriage("You", announcedSuit.Value.ToString(), bonus);
+                        _gameLogger?.LogMarriage(SeatName(seat), announcedSuit.Value.ToString(), bonus);
                         Debug.Log($"[Cruce] Human announces marriage in {announcedSuit.Value} (+{bonus})");
                     }
                 }
@@ -777,7 +1006,7 @@ namespace CruceChaos.Unity
 
             // Legal move computation
             var context = new LegalMoveContext(
-                _humanParticipant.Hand, _currentTrick, _trump, _deck.Count,
+                _localParticipant.Hand, _currentTrick, _trump, _deck.Count,
                 isOpeningLead: isOpeningLead, announcedSuit: announcedSuit);
             IReadOnlyList<Card> legal = _legalMoveEvaluator.LegalMoves(context);
 
@@ -798,8 +1027,8 @@ namespace CruceChaos.Unity
             _keyboardInput?.EndCardInput();
             _humanController.CancelTurn();
 
-            _gameLogger?.LogCardPlayed("You", chosen.ToString());
-            PlayCard(0, _humanParticipant, chosen);
+            _gameLogger?.LogCardPlayed(SeatName(seat), chosen.ToString());
+            PlayCard(seat, _localParticipant, chosen);
             _firstPlayOfRound = false;
         }
 
@@ -850,9 +1079,9 @@ namespace CruceChaos.Unity
 
         /// <summary>
         /// Plays <paramref name="card"/> from <paramref name="seat"/> into the
-        /// current trick and updates the view: seat 0 (human) removes a face-up
-        /// CardView and refans; any other seat removes one face-down back from
-        /// that seat's own fan.
+        /// current trick and updates the view: the ACTIVE human seat removes a
+        /// face-up CardView and refans; any other seat (AI or a not-currently-
+        /// active human) removes one face-down back from that seat's own fan.
         /// </summary>
         private void PlayCard(int seat, RoundParticipant participant, Card card)
         {
@@ -863,7 +1092,7 @@ namespace CruceChaos.Unity
             Sprite sprite = _spriteRegistry != null ? _spriteRegistry.GetSprite(card) : null;
             _trickAreaView?.AddCardToPile(sprite);
 
-            if (seat == 0)
+            if (seat == _activeHumanSeat)
                 RemoveCardViewFromHand(card);
             else
                 RemoveOpponentCardBack(seat);
@@ -929,8 +1158,9 @@ namespace CruceChaos.Unity
                 Card drawn = _deck.Draw();
                 _participants[seat].Hand.Add(drawn);
 
-                // Track the human's new card at the end of the display order.
-                if (seat == 0)
+                // Track the active human's new card at the end of the display
+                // order (the face-up hand belongs to _activeHumanSeat).
+                if (seat == _activeHumanSeat)
                     _handDisplayOrder.Add(drawn);
             }
 
@@ -948,7 +1178,7 @@ namespace CruceChaos.Unity
         {
             var dealt = _deck.Draw(count);
             participant.Hand.AddRange(dealt);
-            if (participant == _humanParticipant)
+            if (participant == _localParticipant)
                 _handDisplayOrder.AddRange(dealt);
         }
 
@@ -962,9 +1192,9 @@ namespace CruceChaos.Unity
 
             // Use _handDisplayOrder to preserve sort/shuffle across rebuilds.
             // Sync it with the actual hand first (remove any cards no longer held).
-            _handDisplayOrder.RemoveAll(c => !_humanParticipant.Hand.Contains(c));
+            _handDisplayOrder.RemoveAll(c => !_localParticipant.Hand.Contains(c));
             // Add any cards in hand that aren't tracked yet (safety net).
-            foreach (Card c in _humanParticipant.Hand.Cards)
+            foreach (Card c in _localParticipant.Hand.Cards)
                 if (!_handDisplayOrder.Contains(c)) _handDisplayOrder.Add(c);
 
             int count = _handDisplayOrder.Count;
@@ -1032,14 +1262,22 @@ namespace CruceChaos.Unity
 
             if (_cardPrefab == null || _participants == null) return;
 
-            // One area per non-human seat, in seat order (seat 1 → element 0).
-            for (int seat = 1; seat < _playerCount; seat++)
+            // Every seat EXCEPT the active (face-up) human renders a face-down
+            // fan. Areas are indexed by non-active seat order: the lowest-numbered
+            // non-active seat → element 0, next → element 1, and so on. When the
+            // active seat is 0 (the default single-human game) this is exactly the
+            // original "seat 1 → element 0" mapping; in hotseat the now-inactive
+            // human seat takes the area slot its index implies.
+            int areaIndex = 0;
+            for (int seat = 0; seat < _playerCount; seat++)
             {
-                int areaIndex = seat - 1;
+                if (seat == _activeHumanSeat) continue;
+
                 RectTransform area = (_opponentHandAreas != null
                                       && areaIndex < _opponentHandAreas.Length)
                     ? _opponentHandAreas[areaIndex]
                     : null;
+                areaIndex++;
                 if (area == null) continue;
 
                 var backs = new List<GameObject>();
