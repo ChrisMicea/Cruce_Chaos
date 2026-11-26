@@ -10,6 +10,7 @@ using CruceChaos.Core.Game.Scoring;
 using CruceChaos.Core.Players;
 using CruceChaos.Core.Players.AI.GreedyHeuristic;
 using CruceChaos.Core.Rules;
+using CruceChaos.Unity.Network;
 
 namespace CruceChaos.Unity
 {
@@ -110,6 +111,10 @@ namespace CruceChaos.Unity
 
         [Header("Scene Navigation")]
         [SerializeField] private string _mainMenuScene = "Main Menu";
+
+        [Header("Network")]
+        [SerializeField] private NetworkGameManagerBridge _networkBridge;
+        private bool _isNetworkGame => _networkBridge != null && _networkBridge.IsNetworkGame;
 
         // ── Runtime state ─────────────────────────────────────────────────────
 
@@ -229,13 +234,23 @@ namespace CruceChaos.Unity
             _playerCount = _config.PlayerCount;
 
             // Decide which seats are human. Priority:
-            //   1. An explicit GameSelection.HumanSeats matching the player count
+            //   1. Network mode: only the local client's assigned seat is human
+            //   2. An explicit GameSelection.HumanSeats matching the player count
             //      (the future seat-selection screen's contract) — used verbatim.
-            //   2. Else GameSelection.PassAndPlay → every seat human (1v1 ⇒ {0,1}).
-            //   3. Else only seat 0 human — the original single-human game, so a
+            //   3. Else GameSelection.PassAndPlay → every seat human (1v1 ⇒ {0,1}).
+            //   4. Else only seat 0 human — the original single-human game, so a
             //      directly-entered editor scene behaves exactly as before.
             _humanSeats = new bool[_playerCount];
-            if (GameSelection.HumanSeats != null
+            
+            if (_isNetworkGame && NetworkGameManager.Instance != null)
+            {
+                // Network mode: only local client's seat is human
+                int localSeat = NetworkGameManager.Instance.GetLocalClientSeat();
+                _humanSeats[localSeat] = true;
+                _activeHumanSeat = localSeat;
+                Debug.Log($"[GameManager] Network mode - local player assigned to seat {localSeat}");
+            }
+            else if (GameSelection.HumanSeats != null
                 && GameSelection.HumanSeats.Length == _playerCount)
             {
                 Array.Copy(GameSelection.HumanSeats, _humanSeats, _playerCount);
@@ -251,9 +266,12 @@ namespace CruceChaos.Unity
 
             // The active human seat starts at the first human seat (0 in the
             // single-human game). Fallback to 0 if somehow no seat is human.
-            _activeHumanSeat = 0;
-            for (int seat = 0; seat < _playerCount; seat++)
-                if (_humanSeats[seat]) { _activeHumanSeat = seat; break; }
+            if (!_isNetworkGame)
+            {
+                _activeHumanSeat = 0;
+                for (int seat = 0; seat < _playerCount; seat++)
+                    if (_humanSeats[seat]) { _activeHumanSeat = seat; break; }
+            }
 
             // Human seats share the one _humanController (served serially); every
             // other seat gets its own AI controller.
@@ -650,7 +668,24 @@ namespace CruceChaos.Unity
                         SetActiveHumanSeat(seat);
 
                     bool bidDone = false;
-                    _humanController.BeginBid(ctx, b => { bid = b; bidDone = true; });
+                    
+                    _humanController.BeginBid(ctx, b => {
+                        if (_isNetworkGame)
+                        {
+                            // Network: send through bridge
+                            _networkBridge.RequestBid(b, () => {
+                                bid = b;
+                                bidDone = true;
+                            });
+                        }
+                        else
+                        {
+                            // Local: apply immediately
+                            bid = b;
+                            bidDone = true;
+                        }
+                    });
+                    
                     _bidPanel?.Show(ctx, _humanController, () => { });
                     _keyboardInput?.BeginBidInput();
                     yield return new WaitUntil(() => bidDone);
@@ -728,7 +763,24 @@ namespace CruceChaos.Unity
 
                 Suit chosen = default;
                 bool done   = false;
-                _humanController.BeginDeclareTrump(suit => { chosen = suit; done = true; });
+                
+                _humanController.BeginDeclareTrump(suit => {
+                    if (_isNetworkGame)
+                    {
+                        // Network: send through bridge
+                        _networkBridge.RequestDeclareTrump(suit, () => {
+                            chosen = suit;
+                            done = true;
+                        });
+                    }
+                    else
+                    {
+                        // Local: apply immediately
+                        chosen = suit;
+                        done = true;
+                    }
+                });
+                
                 _trumpPickerPanel?.Show(suit => { _humanController.SubmitTrump(suit); });
                 yield return new WaitUntil(() => done);
                 _trumpPickerPanel?.Hide();
@@ -1028,8 +1080,24 @@ namespace CruceChaos.Unity
             _humanController.CancelTurn();
 
             _gameLogger?.LogCardPlayed(SeatName(seat), chosen.ToString());
-            PlayCard(seat, _localParticipant, chosen);
-            _firstPlayOfRound = false;
+            
+            if (_isNetworkGame)
+            {
+                // Network: send through bridge
+                bool playDone = false;
+                _networkBridge.RequestPlayCard(chosen, () => {
+                    PlayCard(seat, _localParticipant, chosen);
+                    _firstPlayOfRound = false;
+                    playDone = true;
+                });
+                yield return new WaitUntil(() => playDone);
+            }
+            else
+            {
+                // Local: play immediately
+                PlayCard(seat, _localParticipant, chosen);
+                _firstPlayOfRound = false;
+            }
         }
 
         // ── AI turn ───────────────────────────────────────────────────────────

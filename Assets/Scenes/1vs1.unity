@@ -6947,6 +6947,7 @@ GameObject:
   - component: {fileID: 1442495989}
   - component: {fileID: 1442495988}
   - component: {fileID: 1442495992}
+  - component: {fileID: 1442495993}
   m_Layer: 0
   m_Name: GameManager
   m_TagString: Untagged
@@ -7027,6 +7028,7 @@ MonoBehaviour:
   _keyboardInput: {fileID: 1442495992}
   _sound: {fileID: 587170820}
   _mainMenuScene: Main Menu
+  _networkBridge: {fileID: 0}
 --- !u!4 &1442495991
 Transform:
   m_ObjectHideFlags: 0
@@ -7057,6 +7059,19 @@ MonoBehaviour:
   _gameManager: {fileID: 1442495990}
   _humanController: {fileID: 1442495989}
   _bidPanel: {fileID: 300339941}
+--- !u!114 &1442495993
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1442495987}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: CruceChaos.Unity::CruceChaos.Unity.Network.NetworkGameManagerBridge
+  _gameManager: {fileID: 1442495990}
 --- !u!1 &1468416340
 GameObject:
   m_ObjectHideFlags: 0
