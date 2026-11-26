@@ -113,13 +113,13 @@ InitTestScene*.unity*
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
 
-# --- Cruce_Chaos standalone sandbox (non-Unity .NET console/test harness) ---
+# --- Cruce_Chaos standalone play console (non-Unity .NET console harness) ---
 # Ignore its build output...
-/Sandbox/**/bin/
-/Sandbox/**/obj/
+/PlayConsole/**/bin/
+/PlayConsole/**/obj/
 # ...but keep the hand-written project files that the global *.csproj/*.sln
 # rules above would otherwise exclude.
-!/Sandbox/**/*.csproj
-!/Sandbox/**/*.sln
+!/PlayConsole/**/*.csproj
+!/PlayConsole/**/*.sln
 
 

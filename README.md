@@ -16,4 +16,4 @@ health bar la adversar? singleplayer VS AI, 1 v 1, 2 v 2, 1 v 1 v 1 (?)
 
 ---
 
-Development notes and how to run the standalone sandbox live in [`docs/devlog.md`](docs/devlog.md).
+Development notes and how to run the standalone play console live in [`docs/devlog.md`](docs/devlog.md).
