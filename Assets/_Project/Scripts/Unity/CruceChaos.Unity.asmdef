@@ -3,7 +3,10 @@
     "rootNamespace": "CruceChaos.Unity",
     "references": [
         "CruceChaos.Core",
-        "Unity.TextMeshPro"
+        "Unity.TextMeshPro",
+        "Unity.Netcode.Runtime",
+        "Unity.Collections",
+        "Unity.Networking.Transport"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
