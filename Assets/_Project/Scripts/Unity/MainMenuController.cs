@@ -54,6 +54,16 @@ namespace CruceChaos.Unity
         // are ignored.
         private bool _transitioning;
 
+        // The Pass & Play mode-select panel is left active in the editor (so it's
+        // easy to lay out), so hide it at startup — otherwise it shows on top of
+        // the menu and the Pass & Play button appears to do nothing until Back is
+        // pressed. Mirrors how the panels (BidPanel/PassDevicePanel) self-hide in
+        // Start(). The seat-picker hides itself in its own Start().
+        private void Start()
+        {
+            _modeSelectPanel?.SetActive(false);
+        }
+
         public void OnOneVsOneClicked()
         {
             GameSelection.SelectedMode = GameMode.OneVsOne;
